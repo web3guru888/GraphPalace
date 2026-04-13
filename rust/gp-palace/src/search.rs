@@ -24,13 +24,13 @@ pub struct SearchResult {
 /// This makes frequently-accessed drawers rank slightly higher in search,
 /// reflecting the "well-trodden path" signal from stigmergy.
 pub struct PheromoneBooster {
-    /// How much exploitation pheromone influences ranking. Default 0.1.
+    /// How much exploitation pheromone influences ranking. Default 0.3.
     pub boost_factor: f32,
 }
 
 impl Default for PheromoneBooster {
     fn default() -> Self {
-        Self { boost_factor: 0.1 }
+        Self { boost_factor: 0.3 }
     }
 }
 
@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn booster_default() {
         let b = PheromoneBooster::default();
-        assert!((b.boost_factor - 0.1).abs() < 1e-6);
+        assert!((b.boost_factor - 0.3).abs() < 1e-6);
     }
 
     #[test]

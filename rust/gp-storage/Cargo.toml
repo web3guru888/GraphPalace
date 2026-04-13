@@ -19,6 +19,8 @@ thiserror = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 
+rand = { workspace = true }
+
 # Optional: only needed for Kuzu FFI
 libc = { version = "0.2", optional = true }
 

@@ -149,6 +149,8 @@ impl OnnxEmbeddingEngine {
         let id_vec: Vec<i64> = ids[..seq_len].iter().map(|&x| x as i64).collect();
         let mask_vec: Vec<i64> = mask[..seq_len].iter().map(|&x| x as i64).collect();
 
+        let token_type_vec: Vec<i64> = vec![0i64; seq_len];
+
         let input_ids = Tensor::from_array(([1usize, seq_len], id_vec.into_boxed_slice()))
             .map_err(|e| GraphPalaceError::Embedding(format!("create input_ids tensor: {e}")))?;
         let attention_mask =
@@ -156,13 +158,19 @@ impl OnnxEmbeddingEngine {
                 .map_err(|e| {
                     GraphPalaceError::Embedding(format!("create attention_mask tensor: {e}"))
                 })?;
+        let token_type_ids =
+            Tensor::from_array(([1usize, seq_len], token_type_vec.into_boxed_slice()))
+                .map_err(|e| {
+                    GraphPalaceError::Embedding(format!("create token_type_ids tensor: {e}"))
+                })?;
 
         // Run inference.
         let outputs = self
             .session
             .run(ort::inputs! {
                 "input_ids" => input_ids,
-                "attention_mask" => attention_mask
+                "attention_mask" => attention_mask,
+                "token_type_ids" => token_type_ids
             })
             .map_err(|e| GraphPalaceError::Embedding(format!("inference: {e}")))?;
 
@@ -224,6 +232,8 @@ impl OnnxEmbeddingEngine {
             }
         }
 
+        let token_type_vec: Vec<i64> = vec![0i64; batch_size * seq_len];
+
         let input_ids =
             Tensor::from_array(([batch_size, seq_len], id_vec.into_boxed_slice())).map_err(
                 |e| GraphPalaceError::Embedding(format!("create batch input_ids tensor: {e}")),
@@ -236,13 +246,21 @@ impl OnnxEmbeddingEngine {
                     ))
                 },
             )?;
+        let token_type_ids =
+            Tensor::from_array(([batch_size, seq_len], token_type_vec.into_boxed_slice()))
+                .map_err(|e| {
+                    GraphPalaceError::Embedding(format!(
+                        "create batch token_type_ids tensor: {e}"
+                    ))
+                })?;
 
         // Run inference.
         let outputs = self
             .session
             .run(ort::inputs! {
                 "input_ids" => input_ids,
-                "attention_mask" => attention_mask
+                "attention_mask" => attention_mask,
+                "token_type_ids" => token_type_ids
             })
             .map_err(|e| GraphPalaceError::Embedding(format!("batch inference: {e}")))?;
 

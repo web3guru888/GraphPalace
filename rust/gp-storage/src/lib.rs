@@ -10,6 +10,7 @@ pub mod ffi;
 pub mod safe;
 
 pub mod backend;
+pub mod hnsw;
 pub mod memory;
 pub mod palace_ops;
 pub mod schema_init;

@@ -14,6 +14,15 @@ use serde_json::Value;
 use crate::palace_protocol::{generate_palace_protocol, PalaceStats};
 use crate::tools::{tool_catalog, ToolDefinition};
 
+/// Trait for providing backend tool execution.
+///
+/// Implement this to connect a real palace backend (e.g., `GraphPalace`).
+/// Return `Some(result)` to handle the tool call, or `None` to fall through
+/// to the default placeholder handling.
+pub trait ToolHandler {
+    fn handle_tool(&mut self, name: &str, arguments: Option<&Value>) -> Option<ToolCallResult>;
+}
+
 /// MCP protocol version.
 pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 
@@ -215,6 +224,8 @@ pub struct McpServer {
     tools: Vec<ToolDefinition>,
     /// Whether the server has been initialized.
     initialized: bool,
+    /// Optional backend handler for real tool execution.
+    handler: Option<Box<dyn ToolHandler>>,
 }
 
 impl McpServer {
@@ -224,6 +235,7 @@ impl McpServer {
             stats: PalaceStats::default(),
             tools: tool_catalog(),
             initialized: false,
+            handler: None,
         }
     }
 
@@ -233,7 +245,23 @@ impl McpServer {
             stats,
             tools: tool_catalog(),
             initialized: false,
+            handler: None,
         }
+    }
+
+    /// Create a server with a backend tool handler.
+    pub fn with_handler(handler: Box<dyn ToolHandler>) -> Self {
+        Self {
+            stats: PalaceStats::default(),
+            tools: tool_catalog(),
+            initialized: false,
+            handler: Some(handler),
+        }
+    }
+
+    /// Set the backend tool handler.
+    pub fn set_handler(&mut self, handler: Box<dyn ToolHandler>) {
+        self.handler = Some(handler);
     }
 
     /// Whether the server has been initialized.
@@ -363,12 +391,20 @@ impl McpServer {
     /// Currently returns placeholder responses since the actual graph
     /// backend is not yet connected. Each tool validates its parameters
     /// and returns a structured response.
-    pub fn dispatch_tool(&self, name: &str, arguments: Option<&Value>) -> ToolCallResult {
+    pub fn dispatch_tool(&mut self, name: &str, arguments: Option<&Value>) -> ToolCallResult {
         // Verify tool exists
         if !self.tools.iter().any(|t| t.name == name) {
             return ToolCallResult::error(format!("Unknown tool: {name}"));
         }
 
+        // Try custom handler first
+        if let Some(ref mut handler) = self.handler {
+            if let Some(result) = handler.handle_tool(name, arguments) {
+                return result;
+            }
+        }
+
+        // Fall through to default placeholder handling
         match name {
             // Palace Navigation (read)
             "palace_status" => {
@@ -828,7 +864,7 @@ mod tests {
 
     #[test]
     fn all_28_tools_dispatchable() {
-        let server = McpServer::new();
+        let mut server = McpServer::new();
         let tool_names = server.tool_names();
         for name in &tool_names {
             let result = server.dispatch_tool(name, Some(&serde_json::json!({})));

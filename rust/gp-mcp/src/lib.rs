@@ -20,7 +20,7 @@ pub mod tools;
 // Re-exports for convenience
 pub use protocol::PALACE_PROTOCOL;
 pub use palace_protocol::{PalaceStats, generate_palace_protocol, generate_palace_protocol_minimal};
-pub use server::{McpServer, JsonRpcRequest, JsonRpcResponse, JsonRpcError, ToolCallResult};
+pub use server::{McpServer, JsonRpcRequest, JsonRpcResponse, JsonRpcError, ToolCallResult, ToolHandler};
 pub use tools::{
     // Palace Navigation
     PalaceStatus, ListWings, ListRooms, GetTaxonomy,

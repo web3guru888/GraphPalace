@@ -6,6 +6,7 @@
 //! is not available.
 
 use crate::backend::{StorageBackend, Value};
+use crate::hnsw::HnswIndex;
 use chrono::Utc;
 use gp_core::types::*;
 use gp_core::{GraphPalaceError, Result};
@@ -48,10 +49,23 @@ pub struct PalaceData {
     /// "from:to" → similarity score for SIMILAR_TO edges between drawers.
     #[serde(default)]
     pub similarity_edges: HashMap<String, f32>,
+    /// Hall edges: room→room within the same wing. Key format: "from_room:to_room"
+    #[serde(default)]
+    pub halls: HashMap<String, String>, // key = "from:to", value = wing_id
+    /// Tunnel edges: room→room across different wings. Key format: "from_room:to_room"
+    #[serde(default)]
+    pub tunnels: HashMap<String, ()>, // key = "from:to"
+    /// Specialist agents.
+    #[serde(default)]
+    pub agents: HashMap<String, Agent>,
     /// Auto-incrementing id counter.
     pub next_id: u64,
     /// Whether init_schema has been called.
     pub schema_initialized: bool,
+    /// HNSW approximate nearest neighbor index for drawer embeddings.
+    /// Skipped during serialization — rebuilt from drawer data on load.
+    #[serde(skip)]
+    pub hnsw_index: HnswIndex,
 }
 
 impl PalaceData {
@@ -86,10 +100,14 @@ impl InMemoryBackend {
     }
 
     /// Create a backend pre-loaded with data.
+    ///
+    /// Automatically rebuilds the HNSW index from existing drawers.
     pub fn with_data(data: PalaceData) -> Self {
-        Self {
+        let backend = Self {
             data: Arc::new(RwLock::new(data)),
-        }
+        };
+        backend.rebuild_hnsw_index();
+        backend
     }
 
     /// Get read access to the underlying data.
@@ -108,8 +126,11 @@ impl InMemoryBackend {
     }
 
     /// Restore palace data from a snapshot.
+    ///
+    /// Automatically rebuilds the HNSW index from existing drawers.
     pub fn restore(&self, data: PalaceData) {
         *self.write_data() = data;
+        self.rebuild_hnsw_index();
     }
 
     // -- Wing CRUD -----------------------------------------------------------
@@ -276,6 +297,13 @@ impl InMemoryBackend {
         source_file: Option<&str>,
         importance: f64,
     ) -> Result<String> {
+        if content.len() > 8192 {
+            return Err(GraphPalaceError::InvalidParameter {
+                param: "content".to_string(),
+                value: format!("{} chars", content.len()),
+                reason: format!("Drawer content exceeds maximum size: {} > 8192 chars", content.len()),
+            });
+        }
         let mut d = self.write_data();
         if !d.closets.contains_key(closet_id) {
             return Err(GraphPalaceError::NodeNotFound {
@@ -301,6 +329,8 @@ impl InMemoryBackend {
         if let Some(closet) = d.closets.get_mut(closet_id) {
             closet.drawer_count += 1;
         }
+        // Insert into the HNSW index.
+        d.hnsw_index.insert(&id, &embedding);
         let edge_key = format!("{closet_id}:{id}");
         d.edge_pheromones
             .insert(edge_key.clone(), EdgePheromones::default());
@@ -331,13 +361,25 @@ impl InMemoryBackend {
         {
             closet.drawer_count = closet.drawer_count.saturating_sub(1);
         }
-        // Remove edge pheromones/costs where drawer is involved
-        d.edge_pheromones.retain(|k, _| !k.contains(id));
-        d.edge_costs.retain(|k, _| !k.contains(id));
+        // Remove from the HNSW index.
+        d.hnsw_index.remove(id);
+        // Remove edge pheromones/costs where drawer is involved.
+        // Split on ':' and compare components exactly to avoid false positives
+        // (e.g. "drawer_1" matching "drawer_10").
+        d.edge_pheromones.retain(|k, _| {
+            k.split(':').all(|part| part != id)
+        });
+        d.edge_costs.retain(|k, _| {
+            k.split(':').all(|part| part != id)
+        });
         Ok(())
     }
 
     /// Search drawers by cosine similarity to `query_embedding`.
+    ///
+    /// Uses the HNSW index for approximate nearest neighbor search when
+    /// available, falling back to a linear scan when the index is empty
+    /// (e.g. freshly deserialized data before `rebuild_hnsw_index` is called).
     pub fn search_drawers(
         &self,
         query_embedding: &Embedding,
@@ -345,21 +387,48 @@ impl InMemoryBackend {
         threshold: f32,
     ) -> Vec<(Drawer, f32)> {
         let d = self.read_data();
-        let mut scored: Vec<(Drawer, f32)> = d
+
+        if d.hnsw_index.is_empty() {
+            // Fallback: linear scan (backward compat / freshly loaded data).
+            let mut scored: Vec<(Drawer, f32)> = d
+                .drawers
+                .values()
+                .map(|drawer| {
+                    let sim = gp_embeddings::similarity::cosine_similarity(
+                        query_embedding,
+                        &drawer.embedding,
+                    );
+                    (drawer.clone(), sim)
+                })
+                .filter(|(_, sim)| *sim >= threshold)
+                .collect();
+            scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            scored.truncate(k);
+            return scored;
+        }
+
+        // HNSW approximate search — request 2x candidates to allow for
+        // threshold filtering while still returning enough results.
+        let results = d.hnsw_index.search(query_embedding, k * 2);
+        results
+            .into_iter()
+            .filter(|(_, sim)| *sim >= threshold)
+            .filter_map(|(id, sim)| d.drawers.get(&id).map(|dr| (dr.clone(), sim)))
+            .take(k)
+            .collect()
+    }
+
+    /// Rebuild the HNSW index from all current drawer embeddings.
+    ///
+    /// Call this after deserialization or import to populate the index.
+    pub fn rebuild_hnsw_index(&self) {
+        let mut d = self.write_data();
+        let items: Vec<(String, Embedding)> = d
             .drawers
             .values()
-            .map(|drawer| {
-                let sim = gp_embeddings::similarity::cosine_similarity(
-                    query_embedding,
-                    &drawer.embedding,
-                );
-                (drawer.clone(), sim)
-            })
-            .filter(|(_, sim)| *sim >= threshold)
+            .map(|dr| (dr.id.clone(), dr.embedding))
             .collect();
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        scored.truncate(k);
-        scored
+        d.hnsw_index.build_from(items.iter().map(|(id, emb)| (id.as_str(), emb)));
     }
 
     // -- Entity CRUD ---------------------------------------------------------
@@ -656,6 +725,45 @@ impl InMemoryBackend {
             .collect()
     }
 
+    // -- Hall & Tunnel edges -------------------------------------------------
+
+    /// Create a hall edge between two rooms in the same wing.
+    pub fn create_hall(&self, from_room_id: &str, to_room_id: &str, wing_id: &str) {
+        let mut d = self.write_data();
+        let key = format!("{from_room_id}:{to_room_id}");
+        d.halls.insert(key.clone(), wing_id.to_string());
+        // Bidirectional
+        let rev_key = format!("{to_room_id}:{from_room_id}");
+        d.halls.insert(rev_key, wing_id.to_string());
+    }
+
+    /// Create a tunnel edge between two rooms in different wings.
+    pub fn create_tunnel(&self, from_room_id: &str, to_room_id: &str) {
+        let mut d = self.write_data();
+        let key = format!("{from_room_id}:{to_room_id}");
+        d.tunnels.insert(key.clone(), ());
+        let rev_key = format!("{to_room_id}:{from_room_id}");
+        d.tunnels.insert(rev_key, ());
+    }
+
+    /// List all hall edges.
+    pub fn list_halls(&self) -> Vec<(String, String, String)> {
+        let d = self.read_data();
+        d.halls.iter().map(|(key, wing_id)| {
+            let parts: Vec<&str> = key.split(':').collect();
+            (parts[0].to_string(), parts[1].to_string(), wing_id.clone())
+        }).collect()
+    }
+
+    /// List all tunnel edges.
+    pub fn list_tunnels(&self) -> Vec<(String, String)> {
+        let d = self.read_data();
+        d.tunnels.keys().map(|key| {
+            let parts: Vec<&str> = key.split(':').collect();
+            (parts[0].to_string(), parts[1].to_string())
+        }).collect()
+    }
+
     // -- Taxonomy / stats ----------------------------------------------------
 
     pub fn wing_count(&self) -> usize {
@@ -685,6 +793,101 @@ impl InMemoryBackend {
     pub fn edge_count(&self) -> usize {
         self.read_data().edge_pheromones.len()
     }
+
+    // -- Relationship invalidation & contradictions ----------------------------
+
+    /// Invalidate a relationship by setting its valid_to timestamp.
+    /// Marks the relationship as no longer current without deleting it.
+    pub fn invalidate_relationship(&self, subject: &str, predicate: &str, object: &str) -> bool {
+        let mut d = self.write_data();
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut found = false;
+        for rel in d.relationships.iter_mut() {
+            if rel.subject == subject && rel.predicate == predicate && rel.object == object && rel.valid_to.is_none() {
+                rel.valid_to = Some(now.clone());
+                found = true;
+            }
+        }
+        found
+    }
+
+    /// Find contradicting relationships for an entity.
+    /// Returns pairs of relationships that have the same subject and predicate
+    /// but different objects (or same object/predicate but different subjects).
+    pub fn find_contradictions(&self, entity: &str) -> Vec<(Relationship, Relationship)> {
+        let d = self.read_data();
+        let rels: Vec<&Relationship> = d.relationships.iter()
+            .filter(|r| (r.subject == entity || r.object == entity) && r.valid_to.is_none())
+            .collect();
+        let mut contradictions = Vec::new();
+        for i in 0..rels.len() {
+            for j in (i+1)..rels.len() {
+                // Same subject + predicate, different object = potential contradiction
+                if rels[i].subject == rels[j].subject && rels[i].predicate == rels[j].predicate && rels[i].object != rels[j].object {
+                    contradictions.push((rels[i].clone(), rels[j].clone()));
+                }
+            }
+        }
+        contradictions
+    }
+
+    // -- Agent CRUD -----------------------------------------------------------
+
+    /// Create a new agent.
+    pub fn create_agent(&self, name: &str, domain: &str, focus: &str, goal_embedding: Embedding, temperature: f64) -> Result<String> {
+        let mut d = self.write_data();
+        let id = d.gen_id("agent");
+        let agent = Agent {
+            id: id.clone(),
+            name: name.to_string(),
+            domain: domain.to_string(),
+            focus: focus.to_string(),
+            diary: String::new(),
+            goal_embedding,
+            temperature,
+            created_at: chrono::Utc::now(),
+        };
+        d.agents.insert(id.clone(), agent);
+        Ok(id)
+    }
+
+    /// Get an agent by ID.
+    pub fn get_agent(&self, id: &str) -> Result<Agent> {
+        let d = self.read_data();
+        d.agents.get(id).cloned().ok_or_else(|| GraphPalaceError::NodeNotFound { id: id.to_string() })
+    }
+
+    /// List all agents.
+    pub fn list_agents(&self) -> Vec<Agent> {
+        let d = self.read_data();
+        d.agents.values().cloned().collect()
+    }
+
+    /// Find an agent by name.
+    pub fn find_agent_by_name(&self, name: &str) -> Option<Agent> {
+        let d = self.read_data();
+        d.agents.values().find(|a| a.name == name).cloned()
+    }
+
+    /// Append a timestamped entry to an agent's diary.
+    pub fn append_diary(&self, agent_id: &str, entry: &str) -> Result<()> {
+        let mut d = self.write_data();
+        let agent = d.agents.get_mut(agent_id)
+            .ok_or_else(|| GraphPalaceError::NodeNotFound { id: agent_id.to_string() })?;
+        if !agent.diary.is_empty() {
+            agent.diary.push('\n');
+        }
+        agent.diary.push_str(&format!("[{}] {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"), entry));
+        Ok(())
+    }
+
+    /// Return the number of agents.
+    pub fn agent_count(&self) -> usize {
+        let d = self.read_data();
+        d.agents.len()
+    }
+
+    // -- Stats ----------------------------------------------------------------
 
     pub fn total_pheromone_mass(&self) -> f64 {
         let d = self.read_data();
