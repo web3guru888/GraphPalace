@@ -122,6 +122,13 @@ impl<'a> BackendGraphAccess<'a> {
         if data.parent_map.contains_key(id) {
             deg += 1;
         }
+        // Count similarity edges involving this node
+        for key in data.similarity_edges.keys() {
+            let parts: Vec<&str> = key.split(':').collect();
+            if parts.len() == 2 && (parts[0] == id || parts[1] == id) {
+                deg += 1;
+            }
+        }
         deg
     }
 }
@@ -199,6 +206,27 @@ impl<'a> GraphAccess for BackendGraphAccess<'a> {
                 neighbors.push((edge, Self::node_from_room(r, degree)));
             } else if let Some(c) = d.closets.get(parent_id.as_str()) {
                 neighbors.push((edge, Self::node_from_closet(c, degree)));
+            }
+        }
+
+        // Similarity edges: traverse SIMILAR_TO edges to other drawers
+        for (key, &_sim) in &d.similarity_edges {
+            let parts: Vec<&str> = key.split(':').collect();
+            if parts.len() != 2 {
+                continue;
+            }
+            let (from, to) = (parts[0], parts[1]);
+            let other = if from == id {
+                to
+            } else if to == id {
+                from
+            } else {
+                continue;
+            };
+            if let Some(dr) = d.drawers.get(other) {
+                let degree = Self::degree_of(&d, other);
+                let edge = Self::edge_for_key(&d, id, other, "SIMILAR_TO");
+                neighbors.push((edge, Self::node_from_drawer(dr, degree)));
             }
         }
 
@@ -578,6 +606,54 @@ impl GraphPalace {
             .map_err(|e| GraphPalaceError::Embedding(e.to_string()))?;
         self.storage
             .create_entity(name, EntityType::Concept, name, emb)
+    }
+
+    // -- Similarity graph ---------------------------------------------------
+
+    /// Build a similarity graph between all drawers above `threshold`.
+    ///
+    /// Uses cosine similarity of drawer embeddings. Returns the number of
+    /// `SIMILAR_TO` edges added.
+    pub fn build_similarity_graph(&self, threshold: f32) -> Result<usize> {
+        Ok(self.storage.add_similarity_edges(threshold))
+    }
+
+    /// Find drawers most similar to `drawer_id` via stored similarity edges.
+    ///
+    /// Returns up to `k` pairs of `(other_drawer_id, similarity_score)`
+    /// sorted by descending similarity.
+    pub fn find_similar(&self, drawer_id: &str, k: usize) -> Result<Vec<(String, f32)>> {
+        let d = self.storage.read_data();
+
+        // Verify the drawer exists
+        if !d.drawers.contains_key(drawer_id) {
+            return Err(GraphPalaceError::NodeNotFound {
+                id: drawer_id.to_string(),
+            });
+        }
+
+        let mut similar: Vec<(String, f32)> = Vec::new();
+
+        for (key, &sim) in &d.similarity_edges {
+            let parts: Vec<&str> = key.split(':').collect();
+            if parts.len() != 2 {
+                continue;
+            }
+            if parts[0] == drawer_id {
+                similar.push((parts[1].to_string(), sim));
+            } else if parts[1] == drawer_id {
+                similar.push((parts[0].to_string(), sim));
+            }
+        }
+
+        similar.sort_by(|a, b| b.1.total_cmp(&a.1));
+        similar.truncate(k);
+        Ok(similar)
+    }
+
+    /// Return the count of similarity edges in the palace.
+    pub fn similarity_edge_count(&self) -> usize {
+        self.storage.similarity_edge_count()
     }
 
     // -- Status -------------------------------------------------------------
@@ -1461,5 +1537,279 @@ mod tests {
         assert_eq!(s.wing_count, 2);
         assert_eq!(s.drawer_count, 3);
         assert_eq!(s.entity_count, 2);
+    }
+
+    // ── Similarity graph ─────────────────────────────────────────────────
+
+    #[test]
+    fn build_similarity_graph_empty() {
+        let palace = make_palace();
+        let count = palace.build_similarity_graph(0.5).unwrap();
+        assert_eq!(count, 0, "empty palace should produce no edges");
+    }
+
+    #[test]
+    fn build_similarity_graph_creates_edges() {
+        let mut palace = make_palace();
+        palace
+            .add_drawer("cats are pets", "Animals", "Domestic", DrawerSource::Conversation)
+            .unwrap();
+        palace
+            .add_drawer("dogs are pets", "Animals", "Domestic", DrawerSource::Conversation)
+            .unwrap();
+        palace
+            .add_drawer("quantum physics", "Science", "Physics", DrawerSource::Conversation)
+            .unwrap();
+        // threshold=-1.0 accepts all pairs (cosine sim ≥ -1.0 always)
+        let count = palace.build_similarity_graph(-1.0).unwrap();
+        // 3 drawers → C(3,2) = 3 edges
+        assert_eq!(count, 3);
+        assert_eq!(palace.similarity_edge_count(), 3);
+    }
+
+    #[test]
+    fn build_similarity_graph_respects_threshold() {
+        let mut palace = make_palace();
+        for i in 0..5 {
+            palace
+                .add_drawer(
+                    &format!("content number {i}"),
+                    "Wing",
+                    "Room",
+                    DrawerSource::Conversation,
+                )
+                .unwrap();
+        }
+        // Threshold 1.01 — nothing can reach above 1.0 cosine similarity
+        let count = palace.build_similarity_graph(1.01).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn find_similar_returns_sorted() {
+        let mut palace = make_palace();
+        palace
+            .add_drawer("alpha content", "W", "R", DrawerSource::Conversation)
+            .unwrap();
+        palace
+            .add_drawer("beta content", "W", "R", DrawerSource::Conversation)
+            .unwrap();
+        palace
+            .add_drawer("gamma content", "W", "R", DrawerSource::Conversation)
+            .unwrap();
+        // Use a very low threshold to ensure we get edges
+        palace.build_similarity_graph(-1.0).unwrap();
+
+        let d = palace.storage().read_data();
+        let first_drawer_id = d.drawers.keys().next().unwrap().clone();
+        drop(d);
+
+        let similar = palace.find_similar(&first_drawer_id, 10).unwrap();
+        // With threshold -1.0, all pairs are included; each drawer has 2 neighbors
+        assert_eq!(similar.len(), 2);
+        // Should be sorted descending by similarity
+        assert!(similar[0].1 >= similar[1].1);
+    }
+
+    #[test]
+    fn find_similar_respects_k() {
+        let mut palace = make_palace();
+        for i in 0..5 {
+            palace
+                .add_drawer(
+                    &format!("item {i}"),
+                    "W",
+                    "R",
+                    DrawerSource::Conversation,
+                )
+                .unwrap();
+        }
+        palace.build_similarity_graph(-1.0).unwrap();
+
+        let d = palace.storage().read_data();
+        let first_id = d.drawers.keys().next().unwrap().clone();
+        drop(d);
+
+        let similar = palace.find_similar(&first_id, 2).unwrap();
+        assert_eq!(similar.len(), 2);
+    }
+
+    #[test]
+    fn find_similar_nonexistent_drawer() {
+        let palace = make_palace();
+        let result = palace.find_similar("nonexistent_id", 5);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn find_similar_no_edges() {
+        let mut palace = make_palace();
+        palace
+            .add_drawer("solo drawer", "W", "R", DrawerSource::Conversation)
+            .unwrap();
+        // No similarity graph built
+        let d = palace.storage().read_data();
+        let did = d.drawers.keys().next().unwrap().clone();
+        drop(d);
+
+        let similar = palace.find_similar(&did, 10).unwrap();
+        assert!(similar.is_empty());
+    }
+
+    #[test]
+    fn similarity_edge_count_matches_build() {
+        let mut palace = make_palace();
+        assert_eq!(palace.similarity_edge_count(), 0);
+        for i in 0..4 {
+            palace
+                .add_drawer(
+                    &format!("doc {i}"),
+                    "W",
+                    "R",
+                    DrawerSource::Conversation,
+                )
+                .unwrap();
+        }
+        palace.build_similarity_graph(-1.0).unwrap();
+        assert_eq!(palace.similarity_edge_count(), 6); // C(4,2) = 6
+    }
+
+    #[test]
+    fn similarity_graph_navigable_via_astar() {
+        // After building similarity edges, A* should be able to traverse
+        // between drawers in different wings via SIMILAR_TO edges.
+        let mut palace = make_palace();
+        let did1 = palace
+            .add_drawer("cats and dogs", "Animals", "Pets", DrawerSource::Conversation)
+            .unwrap();
+        let did2 = palace
+            .add_drawer("feline companions", "Biology", "Species", DrawerSource::Conversation)
+            .unwrap();
+
+        // Build similarity graph with very low threshold to ensure edge exists
+        palace.build_similarity_graph(-1.0).unwrap();
+        assert!(palace.similarity_edge_count() > 0);
+
+        // Navigate between drawers across wings via similarity edge
+        let result = palace.navigate(&did1, &did2, None);
+        assert!(result.is_ok(), "should find a path via SIMILAR_TO edge");
+        let path = result.unwrap();
+        assert!(path.path.len() >= 2, "path should have at least start and end");
+    }
+
+    #[test]
+    fn similarity_graph_affects_neighbor_count() {
+        let mut palace = make_palace();
+        let _did1 = palace
+            .add_drawer("content A", "W", "R", DrawerSource::Conversation)
+            .unwrap();
+        let _did2 = palace
+            .add_drawer("content B", "W", "R", DrawerSource::Conversation)
+            .unwrap();
+
+        let d = palace.storage().read_data();
+        let did = d.drawers.keys().next().unwrap().clone();
+        drop(d);
+
+        let graph = BackendGraphAccess::new(palace.storage());
+        let before = graph.get_neighbors(&did).len();
+
+        palace.build_similarity_graph(-1.0).unwrap();
+
+        let graph2 = BackendGraphAccess::new(palace.storage());
+        let after = graph2.get_neighbors(&did).len();
+
+        assert!(
+            after > before,
+            "similarity edges should add neighbors: before={before}, after={after}"
+        );
+    }
+
+    #[test]
+    fn similarity_edges_survive_export_import() {
+        let mut palace = make_palace();
+        palace
+            .add_drawer("first", "W", "R", DrawerSource::Conversation)
+            .unwrap();
+        palace
+            .add_drawer("second", "W", "R", DrawerSource::Conversation)
+            .unwrap();
+        palace.build_similarity_graph(-1.0).unwrap();
+        assert_eq!(palace.similarity_edge_count(), 1);
+
+        let export = palace.export().unwrap();
+        let json = export.to_json().unwrap();
+        let imported = PalaceExport::from_json(&json).unwrap();
+
+        let palace2 = make_palace();
+        palace2.import(imported, ImportMode::Replace).unwrap();
+        assert_eq!(palace2.similarity_edge_count(), 1);
+    }
+
+    #[test]
+    fn find_similar_bidirectional() {
+        let mut palace = make_palace();
+        palace
+            .add_drawer("doc A", "W", "R", DrawerSource::Conversation)
+            .unwrap();
+        palace
+            .add_drawer("doc B", "W", "R", DrawerSource::Conversation)
+            .unwrap();
+        palace.build_similarity_graph(-1.0).unwrap();
+
+        let d = palace.storage().read_data();
+        let ids: Vec<String> = d.drawers.keys().cloned().collect();
+        drop(d);
+
+        // A→B and B→A should both return each other
+        let from_a = palace.find_similar(&ids[0], 10).unwrap();
+        let from_b = palace.find_similar(&ids[1], 10).unwrap();
+        assert!(from_a.iter().any(|(id, _)| *id == ids[1]));
+        assert!(from_b.iter().any(|(id, _)| *id == ids[0]));
+    }
+
+    #[test]
+    fn find_similar_score_matches_edge() {
+        let mut palace = make_palace();
+        palace
+            .add_drawer("one", "W", "R", DrawerSource::Conversation)
+            .unwrap();
+        palace
+            .add_drawer("two", "W", "R", DrawerSource::Conversation)
+            .unwrap();
+        palace.build_similarity_graph(-1.0).unwrap();
+
+        let d = palace.storage().read_data();
+        let ids: Vec<String> = d.drawers.keys().cloned().collect();
+        let stored_sim = *d.similarity_edges.values().next().unwrap();
+        drop(d);
+
+        let similar = palace.find_similar(&ids[0], 10).unwrap();
+        assert_eq!(similar.len(), 1);
+        assert!((similar[0].1 - stored_sim).abs() < 1e-6);
+    }
+
+    #[test]
+    fn similarity_neighbors_have_correct_edge_type() {
+        let mut palace = make_palace();
+        palace
+            .add_drawer("x data", "W", "R", DrawerSource::Conversation)
+            .unwrap();
+        palace
+            .add_drawer("y data", "W", "R", DrawerSource::Conversation)
+            .unwrap();
+        palace.build_similarity_graph(-1.0).unwrap();
+
+        let d = palace.storage().read_data();
+        let did = d.drawers.keys().next().unwrap().clone();
+        drop(d);
+
+        let graph = BackendGraphAccess::new(palace.storage());
+        let neighbors = graph.get_neighbors(&did);
+        let sim_neighbors: Vec<_> = neighbors
+            .iter()
+            .filter(|(e, _)| e.relation_type == "SIMILAR_TO")
+            .collect();
+        assert_eq!(sim_neighbors.len(), 1, "should have exactly one SIMILAR_TO neighbor");
     }
 }

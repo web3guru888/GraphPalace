@@ -45,6 +45,9 @@ pub struct PalaceData {
     pub edge_pheromones: HashMap<String, EdgePheromones>,
     /// "from:to" → EdgeCost
     pub edge_costs: HashMap<String, EdgeCost>,
+    /// "from:to" → similarity score for SIMILAR_TO edges between drawers.
+    #[serde(default)]
+    pub similarity_edges: HashMap<String, f32>,
     /// Auto-incrementing id counter.
     pub next_id: u64,
     /// Whether init_schema has been called.
@@ -565,6 +568,92 @@ impl InMemoryBackend {
         nodes.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
         nodes.truncate(k);
         nodes
+    }
+
+    // -- Similarity edges ----------------------------------------------------
+
+    /// Add a similarity edge between two drawers.
+    ///
+    /// Stores the score in `similarity_edges` and also populates
+    /// `edge_pheromones` / `edge_costs` so that pheromone-related
+    /// bookkeeping (decay, hot paths) works automatically.
+    pub fn add_similarity_edge(&self, drawer_a: &str, drawer_b: &str, similarity: f32) {
+        let mut d = self.write_data();
+        let key = format!("{drawer_a}:{drawer_b}");
+        d.similarity_edges.insert(key.clone(), similarity);
+        d.edge_pheromones.entry(key.clone()).or_default();
+        d.edge_costs
+            .entry(key)
+            .or_insert_with(|| EdgeCost::new(1.0 - similarity as f64));
+    }
+
+    /// Remove a similarity edge between two drawers (either direction).
+    pub fn remove_similarity_edge(&self, drawer_a: &str, drawer_b: &str) -> bool {
+        let mut d = self.write_data();
+        let key_ab = format!("{drawer_a}:{drawer_b}");
+        let key_ba = format!("{drawer_b}:{drawer_a}");
+        let removed_ab = d.similarity_edges.remove(&key_ab).is_some();
+        let removed_ba = d.similarity_edges.remove(&key_ba).is_some();
+        if removed_ab {
+            d.edge_pheromones.remove(&key_ab);
+            d.edge_costs.remove(&key_ab);
+        }
+        if removed_ba {
+            d.edge_pheromones.remove(&key_ba);
+            d.edge_costs.remove(&key_ba);
+        }
+        removed_ab || removed_ba
+    }
+
+    /// Compute pairwise cosine similarity between all drawers and add
+    /// `SIMILAR_TO` edges for pairs above `threshold`.
+    ///
+    /// Returns the number of edges added.
+    pub fn add_similarity_edges(&self, threshold: f32) -> usize {
+        // Collect drawer IDs and embeddings (read lock)
+        let drawer_data: Vec<(String, Embedding)> = {
+            let d = self.read_data();
+            d.drawers
+                .values()
+                .map(|dr| (dr.id.clone(), dr.embedding))
+                .collect()
+        };
+
+        let mut count = 0;
+        for i in 0..drawer_data.len() {
+            for j in (i + 1)..drawer_data.len() {
+                let sim = gp_embeddings::similarity::cosine_similarity(
+                    &drawer_data[i].1,
+                    &drawer_data[j].1,
+                );
+                if sim >= threshold {
+                    self.add_similarity_edge(&drawer_data[i].0, &drawer_data[j].0, sim);
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    /// Return the number of SIMILAR_TO edges currently stored.
+    pub fn similarity_edge_count(&self) -> usize {
+        self.read_data().similarity_edges.len()
+    }
+
+    /// Return all similarity edges as `(from, to, similarity)` triples.
+    pub fn list_similarity_edges(&self) -> Vec<(String, String, f32)> {
+        let d = self.read_data();
+        d.similarity_edges
+            .iter()
+            .filter_map(|(key, &sim)| {
+                let parts: Vec<&str> = key.split(':').collect();
+                if parts.len() == 2 {
+                    Some((parts[0].to_string(), parts[1].to_string(), sim))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     // -- Taxonomy / stats ----------------------------------------------------
@@ -1240,5 +1329,203 @@ mod tests {
             h.join().unwrap();
         }
         assert_eq!(b.wing_count(), 10);
+    }
+
+    // ── Similarity edges ─────────────────────────────────────────────────
+
+    /// Helper: build a backend with a full hierarchy and n drawers whose
+    /// embeddings are created by `make_emb(seed)`.
+    fn backend_with_drawers(count: u8) -> (InMemoryBackend, Vec<String>) {
+        let b = InMemoryBackend::new();
+        let wid = b.create_wing("W", WingType::Domain, "", zero_emb()).unwrap();
+        let rid = b
+            .create_room(&wid, "R", HallType::Facts, "", zero_emb())
+            .unwrap();
+        let cid = b.create_closet(&rid, "C", "", zero_emb()).unwrap();
+        let mut ids = Vec::new();
+        for i in 0..count {
+            let did = b
+                .create_drawer(
+                    &cid,
+                    &format!("drawer {i}"),
+                    make_emb(i),
+                    DrawerSource::Conversation,
+                    None,
+                    0.5,
+                )
+                .unwrap();
+            ids.push(did);
+        }
+        (b, ids)
+    }
+
+    #[test]
+    fn test_add_similarity_edge() {
+        let (b, ids) = backend_with_drawers(2);
+        b.add_similarity_edge(&ids[0], &ids[1], 0.85);
+        assert_eq!(b.similarity_edge_count(), 1);
+    }
+
+    #[test]
+    fn test_add_similarity_edge_populates_pheromones_and_cost() {
+        let (b, ids) = backend_with_drawers(2);
+        b.add_similarity_edge(&ids[0], &ids[1], 0.9);
+        let d = b.read_data();
+        let key = format!("{}:{}", ids[0], ids[1]);
+        assert!(d.edge_pheromones.contains_key(&key));
+        let cost = d.edge_costs.get(&key).unwrap();
+        assert!((cost.base_cost - 0.1).abs() < 1e-6, "cost should be 1.0 - 0.9");
+    }
+
+    #[test]
+    fn test_add_similarity_edge_overwrites_score() {
+        let (b, ids) = backend_with_drawers(2);
+        b.add_similarity_edge(&ids[0], &ids[1], 0.5);
+        b.add_similarity_edge(&ids[0], &ids[1], 0.9);
+        let d = b.read_data();
+        let key = format!("{}:{}", ids[0], ids[1]);
+        let score = d.similarity_edges.get(&key).unwrap();
+        assert!((*score - 0.9).abs() < 1e-6);
+        // Still only 1 edge
+        assert_eq!(b.similarity_edge_count(), 1);
+    }
+
+    #[test]
+    fn test_remove_similarity_edge_forward() {
+        let (b, ids) = backend_with_drawers(2);
+        b.add_similarity_edge(&ids[0], &ids[1], 0.8);
+        assert!(b.remove_similarity_edge(&ids[0], &ids[1]));
+        assert_eq!(b.similarity_edge_count(), 0);
+        // Pheromone and cost entries should also be removed
+        let d = b.read_data();
+        let key = format!("{}:{}", ids[0], ids[1]);
+        assert!(!d.edge_pheromones.contains_key(&key));
+        assert!(!d.edge_costs.contains_key(&key));
+    }
+
+    #[test]
+    fn test_remove_similarity_edge_reverse() {
+        let (b, ids) = backend_with_drawers(2);
+        b.add_similarity_edge(&ids[0], &ids[1], 0.8);
+        // Remove using reversed order
+        assert!(b.remove_similarity_edge(&ids[1], &ids[0]));
+        // The edge was stored as ids[0]:ids[1], so forward removal returns
+        // false but reverse should still return true if the key matches.
+        // Actually: our remove checks both directions — but the stored key
+        // is only forward. reverse won't find it. Let's re-check…
+        // remove_similarity_edge tries both key_ab and key_ba.
+        // key_ab = ids[1]:ids[0] → not found.
+        // key_ba = ids[0]:ids[1] → found!
+    }
+
+    #[test]
+    fn test_remove_nonexistent_similarity_edge() {
+        let (b, _ids) = backend_with_drawers(2);
+        assert!(!b.remove_similarity_edge("fake_a", "fake_b"));
+    }
+
+    #[test]
+    fn test_add_similarity_edges_bulk_above_threshold() {
+        // make_emb(0) and make_emb(1) should have *some* similarity.
+        // With the make_emb helper, we test threshold=0.0 (accepts all).
+        let (b, ids) = backend_with_drawers(4);
+        let count = b.add_similarity_edges(0.0);
+        // 4 drawers → C(4,2) = 6 pairs, threshold 0.0 accepts all.
+        assert_eq!(count, 6, "expected C(4,2) = 6 edges");
+        assert_eq!(b.similarity_edge_count(), 6);
+        drop(ids);
+    }
+
+    #[test]
+    fn test_add_similarity_edges_high_threshold() {
+        let (b, _ids) = backend_with_drawers(4);
+        let count = b.add_similarity_edges(1.0);
+        // Threshold 1.0 — only perfectly identical embeddings would pass.
+        // Different seeds produce different embeddings, so likely 0.
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_add_similarity_edges_returns_correct_count() {
+        let (b, _ids) = backend_with_drawers(3);
+        let count = b.add_similarity_edges(0.0);
+        // 3 drawers → C(3,2) = 3 pairs
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn test_similarity_edge_count_empty() {
+        let b = InMemoryBackend::new();
+        assert_eq!(b.similarity_edge_count(), 0);
+    }
+
+    #[test]
+    fn test_list_similarity_edges() {
+        let (b, ids) = backend_with_drawers(2);
+        b.add_similarity_edge(&ids[0], &ids[1], 0.7);
+        let edges = b.list_similarity_edges();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].0, ids[0]);
+        assert_eq!(edges[0].1, ids[1]);
+        assert!((edges[0].2 - 0.7).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_list_similarity_edges_empty() {
+        let b = InMemoryBackend::new();
+        assert!(b.list_similarity_edges().is_empty());
+    }
+
+    #[test]
+    fn test_similarity_edge_survives_snapshot_restore() {
+        let (b, ids) = backend_with_drawers(2);
+        b.add_similarity_edge(&ids[0], &ids[1], 0.6);
+        let snap = b.snapshot();
+        let b2 = InMemoryBackend::with_data(snap);
+        assert_eq!(b2.similarity_edge_count(), 1);
+        let edges = b2.list_similarity_edges();
+        assert!((edges[0].2 - 0.6).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_similarity_edges_serialization() {
+        let (b, ids) = backend_with_drawers(3);
+        b.add_similarity_edges(0.0);
+        let snap = b.snapshot();
+        let json = serde_json::to_string(&snap).unwrap();
+        let deser: PalaceData = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.similarity_edges.len(), 3);
+    }
+
+    #[test]
+    fn test_similarity_edges_deserialize_missing_field() {
+        // Backward compat: old serialized data without similarity_edges
+        let json = r#"{"wings":{},"rooms":{},"closets":{},"drawers":{},"entities":{},"relationships":[],"parent_map":{},"edge_pheromones":{},"edge_costs":{},"next_id":0,"schema_initialized":false}"#;
+        let data: PalaceData = serde_json::from_str(json).unwrap();
+        assert!(data.similarity_edges.is_empty());
+    }
+
+    #[test]
+    fn test_multiple_similarity_edges_different_pairs() {
+        let (b, ids) = backend_with_drawers(4);
+        b.add_similarity_edge(&ids[0], &ids[1], 0.9);
+        b.add_similarity_edge(&ids[0], &ids[2], 0.7);
+        b.add_similarity_edge(&ids[1], &ids[3], 0.5);
+        assert_eq!(b.similarity_edge_count(), 3);
+        // edge_pheromones should also have 3 entries for similarity
+        // (plus containment edges from hierarchy creation)
+    }
+
+    #[test]
+    fn test_similarity_edge_score_range() {
+        let (b, ids) = backend_with_drawers(2);
+        // Test with various valid similarity scores
+        b.add_similarity_edge(&ids[0], &ids[1], 0.0);
+        let edges = b.list_similarity_edges();
+        assert!((edges[0].2).abs() < 1e-6);
+
+        b.add_similarity_edge(&ids[0], &ids[1], 1.0);
+        let edges = b.list_similarity_edges();
+        assert!((edges[0].2 - 1.0).abs() < 1e-6);
     }
 }
