@@ -1012,7 +1012,9 @@ impl StorageBackend for InMemoryBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gp_core::types::*;
+    use gp_core::types::{
+        DrawerSource, Embedding, EntityType, HallType, WingType,
+    };
 
     fn zero_emb() -> Embedding {
         [0.0f32; 384]
@@ -1446,8 +1448,10 @@ mod tests {
 
     #[test]
     fn test_with_data() {
-        let mut data = PalaceData::default();
-        data.next_id = 100;
+        let data = PalaceData {
+            next_id: 100,
+            ..PalaceData::default()
+        };
         let b = InMemoryBackend::with_data(data);
         let id = b.create_wing("W", WingType::Domain, "", zero_emb()).unwrap();
         assert!(id.contains("101"));
@@ -1692,7 +1696,7 @@ mod tests {
 
     #[test]
     fn test_similarity_edges_serialization() {
-        let (b, ids) = backend_with_drawers(3);
+        let (b, _ids) = backend_with_drawers(3);
         b.add_similarity_edges(0.0);
         let snap = b.snapshot();
         let json = serde_json::to_string(&snap).unwrap();

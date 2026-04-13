@@ -2,9 +2,16 @@ name: GraphPalace CI
 
 on:
   push:
+    branches: [master]
     paths: ['rust/**', 'skills/**', 'graphpalace.toml']
   pull_request:
+    branches: [master]
     paths: ['rust/**']
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
 
 jobs:
   test:
@@ -12,7 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -21,26 +33,62 @@ jobs:
             ~/.cargo/git
             rust/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
-      - name: Run tests
-        working-directory: rust
-        run: cargo test --workspace
-      - name: Clippy
-        working-directory: rust
-        run: cargo clippy --workspace -- -D warnings
-      - name: Format check
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check formatting
         working-directory: rust
         run: cargo fmt --all -- --check
 
-  wasm:
-    name: Build WASM
+      - name: Clippy (default features)
+        working-directory: rust
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test (default features)
+        working-directory: rust
+        run: cargo test --workspace
+
+      - name: Test (with TF-IDF)
+        working-directory: rust
+        run: cargo test --workspace --features gp-embeddings/tfidf
+
+      - name: Build release
+        working-directory: rust
+        run: cargo build --release --workspace
+
+  bench:
+    name: Benchmarks
     runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: test
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
         with:
-          targets: wasm32-unknown-unknown
-      - name: Install wasm-pack
-        run: cargo install wasm-pack
-      - name: Build WASM
-        working-directory: rust/gp-wasm
-        run: wasm-pack build --target web
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build benchmarks
+        working-directory: rust
+        run: cargo build --release -p gp-bench
+
+      - name: Run TF-IDF benchmarks
+        working-directory: rust
+        run: cargo run --release -p gp-bench --bin run_benchmarks_tfidf | tee benchmark-output.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: rust/benchmark-output.txt
+          retention-days: 30

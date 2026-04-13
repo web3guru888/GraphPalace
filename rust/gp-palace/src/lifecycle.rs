@@ -107,12 +107,12 @@ mod tests {
         let hp = HotPath {
             from_id: "room_1".into(),
             to_id: "room_2".into(),
-            success_pheromone: 3.14,
+            success_pheromone: 3.15,
         };
         let json = serde_json::to_string(&hp).unwrap();
         let deser: HotPath = serde_json::from_str(&json).unwrap();
         assert_eq!(deser.from_id, "room_1");
-        assert!((deser.success_pheromone - 3.14).abs() < 1e-10);
+        assert!((deser.success_pheromone - 3.15).abs() < 1e-10);
     }
 
     #[test]

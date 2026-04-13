@@ -17,16 +17,16 @@ onnx = ["gp-embeddings/onnx"]
 download = ["gp-embeddings/download", "onnx"]
 
 [dependencies]
-clap = { version = "4", features = ["derive", "env"] }
-gp-core = { path = "../gp-core" }
+gp-core = { workspace = true }
+gp-palace = { workspace = true }
+gp-storage = { workspace = true }
+gp-embeddings = { workspace = true, features = ["tfidf"] }
+gp-mcp = { path = "../gp-mcp" }
 gp-stigmergy = { path = "../gp-stigmergy" }
 gp-pathfinding = { path = "../gp-pathfinding" }
 gp-agents = { path = "../gp-agents" }
-gp-embeddings = { path = "../gp-embeddings" }
-gp-mcp = { path = "../gp-mcp" }
-gp-palace = { path = "../gp-palace" }
-gp-storage = { path = "../gp-storage" }
 gp-swarm = { path = "../gp-swarm" }
+clap = { version = "4", features = ["derive", "env"] }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

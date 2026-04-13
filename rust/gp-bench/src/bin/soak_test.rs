@@ -55,7 +55,7 @@ struct Cli {
 /// - **Exploiter**: low temperature (0.1) — greedy, follows pheromones
 /// - **Balanced**: medium temperature (0.5) — equal explore/exploit
 /// - **Specialist**: medium-low temperature (0.3) — narrow goal focus
-///     (goal embedding has a spike in dimension 0)
+///   (goal embedding has a spike in dimension 0)
 /// - **Generalist**: medium-high temperature (0.7) — broad coverage
 fn make_agents() -> Vec<ActiveInferenceAgent> {
     let zero = zero_embedding();
@@ -275,7 +275,7 @@ fn main() {
         println!("{}", line);
 
         // Progress every 100 cycles on stderr.
-        if (cycle_num + 1) % 100 == 0 {
+        if (cycle_num + 1).is_multiple_of(100) {
             eprintln!(
                 "  cycle {:>5} | mass={:.2} | Δ={:.4} | var={:.6} | criteria={}/3 | converged={}",
                 cycle_num + 1,

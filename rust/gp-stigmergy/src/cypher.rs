@@ -498,8 +498,8 @@ mod tests {
 
     #[test]
     fn test_cypher_value_from_f64() {
-        let v: CypherValue = 3.14.into();
-        assert_eq!(v, CypherValue::Float(3.14));
+        let v: CypherValue = 2.72.into();
+        assert_eq!(v, CypherValue::Float(2.72));
     }
 
     #[test]
