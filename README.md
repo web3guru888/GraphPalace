@@ -4,12 +4,13 @@
 
 [![CI](https://github.com/web3guru888/GraphPalace/actions/workflows/graphpalace-ci.yml/badge.svg)](https://github.com/web3guru888/GraphPalace/actions/workflows/graphpalace-ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Tests](https://img.shields.io/badge/tests-438_passing-brightgreen)
-![Rust](https://img.shields.io/badge/rust-10_crates-orange)
+![Tests](https://img.shields.io/badge/tests-604_passing-brightgreen)
+![Rust](https://img.shields.io/badge/rust-13_crates-orange)
+![LOC](https://img.shields.io/badge/LOC-18%2C000-blue)
 
 GraphPalace is an embedded graph database that makes the **memory palace metaphor computationally real**. Built as a Rust extension to [Kùzu](https://github.com/kuzudb/kuzu) — a property graph database with Cypher, native HNSW vector search, full-text search, and WASM bindings — it adds stigmergic navigation, spatial hierarchy, semantic A\* pathfinding, and Active Inference agents. The result: a **fully local, private, self-optimizing AI memory system** that runs in a browser tab, on a server, or on an edge device. No cloud. No API keys. No data exfiltration.
 
-> **Status**: All 7 implementation phases complete — 10 Rust crates, 438 tests, 11,860 LOC, zero failures.
+> **Status**: All 10 implementation phases complete — 13 Rust crates, 604 tests, 18,000 LOC, zero failures.
 
 ---
 
@@ -36,6 +37,12 @@ GraphPalace is an embedded graph database that makes the **memory palace metapho
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
+│                    gp-bench (Benchmarks)                              │
+│       Recall · Pathfinding · Throughput · Comparison Reports         │
+├──────────────────────────────────────────────────────────────────────┤
+│                    gp-palace (Orchestrator)                           │
+│     GraphPalace struct · Search · Navigate · Export/Import           │
+├──────────────────────────────────────────────────────────────────────┤
 │                     MCP Server (gp-mcp)                              │
 │              28 tools · JSON-RPC 2.0 · PALACE_PROTOCOL               │
 ├──────────┬─────────────┬──────────────┬───────────┬─────────────────┤
@@ -47,6 +54,9 @@ GraphPalace is an embedded graph database that makes the **memory palace metapho
 ├──────────┴─────────────┴──────────────┴───────────┴─────────────────┤
 │                        gp-swarm                                      │
 │     SwarmCoordinator · ConvergenceDetector · InterestScore           │
+├──────────────────────────────────────────────────────────────────────┤
+│                       gp-storage (FFI)                               │
+│  StorageBackend trait · InMemoryBackend · KuzuBackend (C API FFI)    │
 ├──────────────────────────────────────────────────────────────────────┤
 │                        gp-wasm                                       │
 │     InMemoryPalace · JS API · Web Workers · IndexedDB/OPFS          │
@@ -134,7 +144,7 @@ Drop [`skills/graphpalace.md`](skills/graphpalace.md) into your LLM's context. I
 
 ## Crate Map
 
-GraphPalace is organized as a Rust workspace with 8 library crates + 2 binary/binding stubs:
+GraphPalace is organized as a Rust workspace with 11 library crates + 2 binary/binding stubs:
 
 | Crate | Tests | LOC | Description |
 |-------|------:|----:|-------------|
@@ -144,12 +154,15 @@ GraphPalace is organized as a Rust workspace with 8 library crates + 2 binary/bi
 | **[gp-agents](rust/gp-agents/)** | 50 | 1,160 | Active Inference: EFE minimization, Bayesian belief updates, softmax action selection, temperature annealing (linear/exponential/cosine), 5 archetypes |
 | **[gp-swarm](rust/gp-swarm/)** | 50 | 1,228 | Multi-agent coordination: sense→decide→act→update cycle, 3-criteria convergence detection, interest scoring, periodic decay scheduling |
 | **[gp-embeddings](rust/gp-embeddings/)** | 23 | 465 | Embedding engine trait with mock implementation, cosine similarity, top-k search, LRU cache |
+| **[gp-storage](rust/gp-storage/)** | 60 | 2,628 | Storage backend: `StorageBackend` trait, `InMemoryBackend` (full CRUD + search), Kuzu C API FFI bindings (feature-gated), schema initialization, palace operations |
+| **[gp-palace](rust/gp-palace/)** | 63 | 1,888 | Unified orchestrator: `GraphPalace` struct, auto-hierarchy creation, search with pheromone boosting, A\* navigation, KG CRUD, export/import (Replace/Merge/Overlay) |
 | **[gp-mcp](rust/gp-mcp/)** | 84 | 2,129 | MCP server: JSON-RPC 2.0 message handling, 28 tool definitions with schemas, PALACE_PROTOCOL prompt generation with live stats |
 | **[gp-wasm](rust/gp-wasm/)** | 67 | 1,859 | WASM target: `InMemoryPalace` engine, `wasm-bindgen` JS API, Web Worker message types, IndexedDB/OPFS persistence layer |
+| **[gp-bench](rust/gp-bench/)** | 43 | 1,624 | Benchmark suite: recall@k (target ≥96.6%), A\* pathfinding (target ≥90.9%), throughput, Criterion harness, comparison reports (JSON/Markdown) |
 | *[gp-cli](rust/gp-cli/)* | — | 335 | CLI binary stub: 12 subcommands (`init`, `search`, `navigate`, `add-drawer`, `status`, `export`, ...) via clap |
 | *[gp-python](rust/gp-python/)* | — | 147 | Python bindings stub via PyO3 + maturin: `Palace` class with `add_drawer()`, `search()`, `navigate()` |
 
-**Total: 438 tests · 11,860 LOC · 0 failures · 0 clippy warnings**
+**Total: 604 tests · 18,000 LOC · 0 failures · 0 clippy warnings**
 
 ---
 
@@ -319,6 +332,8 @@ See [`examples/graphpalace/`](examples/graphpalace/) for working code:
 - **[basic_palace.rs](examples/graphpalace/basic_palace.rs)** — Create a palace, add wings/rooms/drawers, compute similarity
 - **[pheromone_navigation.rs](examples/graphpalace/pheromone_navigation.rs)** — Deposit pheromones, simulate decay, configure A\*
 - **[agent_swarm.rs](examples/graphpalace/agent_swarm.rs)** — Create 5 agent archetypes, update beliefs, compute EFE
+- **[full_lifecycle.rs](examples/graphpalace/full_lifecycle.rs)** — Complete 10-step lifecycle: create → populate → search → navigate → reinforce → decay → export → import → verify
+- **[benchmark_run.rs](examples/graphpalace/benchmark_run.rs)** — Generate test palace, run recall/pathfinding/throughput benchmarks, print results
 
 ---
 
@@ -341,10 +356,13 @@ See [`examples/graphpalace/`](examples/graphpalace/) for working code:
 
 | Guide | Description |
 |-------|-------------|
-| [Architecture Overview](docs/architecture.md) | System layers, crate dependencies, data flow |
+| [Architecture Overview](docs/architecture.md) | System layers, all 13 crates, dependency graph, data flow |
+| [Storage Backend](docs/storage.md) | `StorageBackend` trait, Kuzu FFI, `InMemoryBackend`, schema init |
+| [Palace Orchestrator](docs/palace.md) | `GraphPalace` struct, lifecycle, search, navigation, export/import |
 | [Stigmergy System](docs/stigmergy.md) | 5 pheromone types, decay formula, deposit operations, emergent behaviors |
 | [Pathfinding](docs/pathfinding.md) | Semantic A\*, composite cost model, adaptive heuristic, context weights |
 | [Active Inference Agents](docs/agents.md) | EFE, Bayesian beliefs, 5 archetypes, swarm coordination, convergence |
+| [Benchmarks](docs/benchmarks.md) | Recall, pathfinding, throughput benchmarks, comparison reports |
 | [MCP Tools Reference](docs/mcp-tools.md) | All 28 tools with parameter tables and PALACE_PROTOCOL |
 | [Palace Schema](docs/palace-schema.md) | Full Cypher DDL — 7 node types, 11 edge types, indexes |
 | [Skills Protocol](docs/skills-protocol.md) | How skills.md works, customization, LLM integration |
@@ -377,10 +395,10 @@ GraphPalace stands on the shoulders of:
 - [x] **Phase 4: Agents + Swarm** — NEW gp-swarm crate, coordinator, convergence (+50 tests)
 - [x] **Phase 5: MCP Server** — JSON-RPC 2.0, 28-tool dispatch, PALACE_PROTOCOL (+42 tests)
 - [x] **Phase 6: WASM** — InMemoryPalace, JS API, Web Workers, persistence (+63 tests)
-- [x] **Phase 7: Distribution** — CI/CD, docs (7 files), CLI, Python bindings, examples
-- [ ] **Phase 8: Kuzu FFI** — Connect Rust crates to Kuzu C++ engine via FFI
-- [ ] **Phase 9: Live Palace** — End-to-end working memory palace with real embeddings
-- [ ] **Phase 10: Benchmarks** — vs MemPalace (96.6% recall target), STAN_X (90.9% A\* target)
+- [x] **Phase 7: Distribution** — CI/CD, docs (10 files), CLI, Python bindings, examples
+- [x] **Phase 8: Kuzu FFI** — gp-storage crate, `StorageBackend` trait, Kuzu C API FFI, `InMemoryBackend` (+60 tests)
+- [x] **Phase 9: Live Palace** — gp-palace orchestrator, search + navigate + KG + export/import (+63 tests)
+- [x] **Phase 10: Benchmarks** — gp-bench suite, recall/pathfinding/throughput, Criterion harness (+43 tests)
 
 ---
 

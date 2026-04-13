@@ -9,6 +9,10 @@ GraphPalace is a layered system built on top of the Kuzu embedded graph database
 │              Application Layer                   │
 │  MCP Server │ CLI │ Python bindings │ WASM/JS   │
 ├─────────────────────────────────────────────────┤
+│              Orchestration Layer                  │
+│  gp-palace  (Unified orchestrator)               │
+│  gp-bench   (Benchmark infrastructure)           │
+├─────────────────────────────────────────────────┤
 │              Intelligence Layer                   │
 │  gp-agents (Active Inference)                    │
 │  gp-swarm  (Multi-agent coordination)            │
@@ -22,22 +26,24 @@ GraphPalace is a layered system built on top of the Kuzu embedded graph database
 │  gp-embeddings (Semantic vectors)                │
 ├─────────────────────────────────────────────────┤
 │              Storage Layer                        │
-│  Kuzu (C++20)                                    │
-│  Cypher · HNSW · FTS · ACID · Columnar · WASM   │
+│  gp-storage (StorageBackend trait)               │
+│  KuzuBackend (C++ FFI) │ InMemoryBackend         │
 └─────────────────────────────────────────────────┘
 ```
 
 ## Crate Dependency Graph
 
 ```
-gp-wasm ──→ gp-mcp ──→ gp-agents ──→ gp-pathfinding ──→ gp-stigmergy ──→ gp-core
-                    │            │                    │                │
-                    │            └──→ gp-embeddings   │                │
-                    │                                  └──→ gp-core    │
-                    └──→ gp-swarm ──→ gp-agents                       │
-                                  └──→ gp-stigmergy                   │
-                                                                      │
-                                          gp-embeddings ──→ gp-core ──┘
+gp-wasm ──→ gp-mcp ──→ gp-palace ──→ gp-swarm ──→ gp-agents ──→ gp-pathfinding ──→ gp-stigmergy ──→ gp-core
+                    │            │            └──→ gp-stigmergy                  │                │
+                    │            │                                                └──→ gp-embeddings│
+                    │            ├──→ gp-storage ──→ gp-core                                      │
+                    │            │    (KuzuBackend / InMemoryBackend)                               │
+                    │            ├──→ gp-embeddings                                                │
+                    │            └──→ gp-stigmergy                                                 │
+                    │                                                                              │
+gp-bench ──→ gp-palace                                    gp-embeddings ──→ gp-core ──────────────┘
+         └──→ gp-storage
 ```
 
 ### Dependency Summary
@@ -50,7 +56,10 @@ gp-wasm ──→ gp-mcp ──→ gp-agents ──→ gp-pathfinding ──→ 
 | `gp-pathfinding` | `gp-core`, `gp-stigmergy` | Semantic A*, composite cost, heuristic |
 | `gp-agents` | `gp-core`, `gp-pathfinding`, `gp-embeddings` | Active Inference, beliefs, archetypes |
 | `gp-swarm` | `gp-core`, `gp-agents`, `gp-stigmergy` | Multi-agent coordinator, convergence |
-| `gp-mcp` | `gp-core`, `gp-agents`, `gp-swarm` | 28 MCP tool definitions, PALACE_PROTOCOL |
+| `gp-storage` | `gp-core` | StorageBackend trait, KuzuBackend (FFI), InMemoryBackend |
+| `gp-palace` | `gp-storage`, `gp-embeddings`, `gp-stigmergy`, `gp-swarm` | Unified orchestrator — main entry point |
+| `gp-bench` | `gp-palace`, `gp-storage` | Benchmark suite — recall, pathfinding, throughput |
+| `gp-mcp` | `gp-palace`, `gp-core` | 28 MCP tool definitions, PALACE_PROTOCOL |
 | `gp-wasm` | `gp-mcp` | WASM bindgen entry point |
 
 ## Data Flow
@@ -180,3 +189,74 @@ Start Node, Goal Node
 4. **Active Inference** — Agents don't just follow rules. They maintain Bayesian beliefs about the palace and choose actions that minimize Expected Free Energy — balancing exploration and exploitation.
 
 5. **Fully local** — No cloud, no API keys, no data exfiltration. The entire system runs on-device, including embeddings (ONNX/WASM) and graph storage (Kuzu).
+
+---
+
+## Crate Details: gp-storage
+
+The storage abstraction layer. Defines the `StorageBackend` trait and ships two implementations.
+
+```
+gp-storage/
+├── Cargo.toml
+└── src/
+    ├── lib.rs                 # Re-exports, feature gates
+    ├── backend.rs             # StorageBackend trait definition
+    ├── in_memory.rs           # InMemoryBackend (HashMap-based)
+    ├── kuzu.rs                # KuzuBackend (C FFI, behind `kuzu-ffi` feature)
+    ├── schema.rs              # Cypher DDL generation (7 node + 11 edge tables)
+    └── export.rs              # PalaceExport, ImportMode, serialization
+```
+
+**Key types**: `StorageBackend` (trait), `InMemoryBackend`, `KuzuBackend`, `PalaceExport`, `ImportMode`
+
+**Feature flags**: Default is in-memory only. Enable `kuzu-ffi` for the Kuzu C++ backend. This keeps WASM builds lightweight and CI fast.
+
+**Design**: Every operation in GraphPalace ultimately flows through `StorageBackend`. The trait is `Send + Sync` so `GraphPalace` can be used from async contexts. The in-memory backend uses brute-force cosine similarity for vector search (O(n), fine for <10K drawers). The Kuzu backend uses HNSW indexes for O(log n) search.
+
+See [storage.md](storage.md) for full documentation.
+
+## Crate Details: gp-palace
+
+The unified orchestrator — the main entry point for applications. Ties together storage, embeddings, stigmergy, pathfinding, agents, and export/import into a single `GraphPalace` struct.
+
+```
+gp-palace/
+├── Cargo.toml
+└── src/
+    ├── lib.rs                 # GraphPalace struct, PalaceBuilder
+    ├── search.rs              # Semantic search with pheromone boosting
+    ├── navigate.rs            # A* navigation with context-adaptive weights
+    ├── knowledge_graph.rs     # Entity CRUD, relationship queries, contradictions
+    ├── lifecycle.rs           # Create/populate/decay operations
+    ├── export_import.rs       # Export, import with Replace/Merge/Overlay modes
+    └── status.rs              # PalaceStatus, monitoring, hot paths, cold spots
+```
+
+**Key types**: `GraphPalace`, `PalaceBuilder`, `SearchOptions`, `NavigateOptions`, `PalaceStatus`
+
+**Design**: `GraphPalace` owns a `Box<dyn StorageBackend>` and a `Box<dyn EmbeddingEngine>`. All public methods coordinate across subsystems — for example, `search()` encodes the query via the embedding engine, searches via the storage backend, boosts scores using stigmergy, then deposits recency pheromones. The `PalaceBuilder` follows the builder pattern for ergonomic construction.
+
+**Lifecycle**: create → populate → search → navigate → reinforce → decay → export. See [palace.md](palace.md) for full documentation.
+
+## Crate Details: gp-bench
+
+Benchmark infrastructure for measuring recall, pathfinding, and throughput against MemPalace and STAN_X baselines.
+
+```
+gp-bench/
+├── Cargo.toml
+└── src/
+    ├── lib.rs                 # run_all_benchmarks(), BenchConfig
+    ├── recall.rs              # RecallBenchmark — target ≥96.6%
+    ├── pathfinding.rs         # PathfindingBenchmark — target ≥90.9%
+    ├── throughput.rs          # ThroughputBenchmark — insert/search/decay rates
+    ├── generator.rs           # TestPalaceGenerator — deterministic test data
+    └── report.rs              # Structured JSON reporting
+```
+
+**Key types**: `RecallBenchmark`, `PathfindingBenchmark`, `ThroughputBenchmark`, `TestPalaceGenerator`, `BenchReport`
+
+**Design**: Each benchmark struct uses the builder pattern for configuration. `TestPalaceGenerator` uses a seeded RNG for deterministic, reproducible test palaces across runs. Results are structured as JSON for CI integration. The generator creates realistic multi-domain content across 6 domains (climate, economics, astrophysics, epidemiology, materials science, general knowledge).
+
+See [benchmarks.md](benchmarks.md) for full documentation.
