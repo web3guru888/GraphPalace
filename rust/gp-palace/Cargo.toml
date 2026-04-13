@@ -1,0 +1,20 @@
+[package]
+name = "gp-palace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Unified GraphPalace orchestrator: memory palace with semantic search, A* navigation, and stigmergy"
+
+[dependencies]
+gp-core = { workspace = true }
+gp-storage = { workspace = true }
+gp-stigmergy = { workspace = true }
+gp-pathfinding = { workspace = true }
+gp-agents = { workspace = true }
+gp-swarm = { workspace = true }
+gp-embeddings = { workspace = true }
+gp-mcp = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }

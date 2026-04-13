@@ -160,6 +160,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "gp-palace"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "gp-agents",
+ "gp-core",
+ "gp-embeddings",
+ "gp-mcp",
+ "gp-pathfinding",
+ "gp-stigmergy",
+ "gp-storage",
+ "gp-swarm",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "gp-pathfinding"
 version = "0.1.0"
 dependencies = [

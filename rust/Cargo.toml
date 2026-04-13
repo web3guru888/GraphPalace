@@ -9,6 +9,7 @@ members = [
     "gp-wasm",
     "gp-swarm",
     "gp-storage",
+    "gp-palace",
 ]
 resolver = "2"
 
@@ -44,6 +45,7 @@ gp-embeddings = { path = "gp-embeddings" }
 gp-mcp = { path = "gp-mcp" }
 gp-swarm = { path = "gp-swarm" }
 gp-storage = { path = "gp-storage" }
+gp-palace = { path = "gp-palace" }
 
 [profile.release]
 opt-level = 3
