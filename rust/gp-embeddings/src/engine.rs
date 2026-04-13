@@ -116,6 +116,12 @@ pub fn auto_engine(model_dir: Option<&Path>) -> Box<dyn EmbeddingEngine> {
     // Suppress unused-variable warning when `onnx` feature is disabled.
     let _ = model_dir;
 
+    #[cfg(feature = "tfidf")]
+    {
+        return Box::new(crate::tfidf::TfIdfEmbeddingEngine::new());
+    }
+
+    #[allow(unreachable_code)]
     Box::new(MockEmbeddingEngine::new())
 }
 

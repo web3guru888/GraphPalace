@@ -7,6 +7,7 @@ description = "Embedding vectors and similarity: cosine distance, vector quantis
 
 [features]
 default = []
+tfidf = []  # no extra deps — pure Rust TF-IDF engine
 onnx = ["dep:ort", "dep:tokenizers", "dep:ndarray"]
 download = ["dep:ureq", "onnx"]
 
