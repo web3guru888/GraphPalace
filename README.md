@@ -4,13 +4,14 @@
 
 [![CI](https://github.com/web3guru888/GraphPalace/actions/workflows/graphpalace-ci.yml/badge.svg)](https://github.com/web3guru888/GraphPalace/actions/workflows/graphpalace-ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Tests](https://img.shields.io/badge/tests-604_passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-680_passing-brightgreen)
 ![Rust](https://img.shields.io/badge/rust-13_crates-orange)
-![LOC](https://img.shields.io/badge/LOC-18%2C000-blue)
+![LOC](https://img.shields.io/badge/LOC-21%2C167-blue)
+[![Paper](https://img.shields.io/badge/paper-PDF-red)](paper/graphpalace-paper.pdf)
 
 GraphPalace is an embedded graph database that makes the **memory palace metaphor computationally real**. Built as a Rust extension to [Kùzu](https://github.com/kuzudb/kuzu) — a property graph database with Cypher, native HNSW vector search, full-text search, and WASM bindings — it adds stigmergic navigation, spatial hierarchy, semantic A\* pathfinding, and Active Inference agents. The result: a **fully local, private, self-optimizing AI memory system** that runs in a browser tab, on a server, or on an edge device. No cloud. No API keys. No data exfiltration.
 
-> **Status**: All 10 implementation phases complete — 13 Rust crates, 604 tests, 18,000 LOC, zero failures.
+> **Status**: All 10 phases complete — 13 Rust crates, 680 tests, 21,167 LOC, zero failures. **[Read the paper →](paper/graphpalace-paper.pdf)**
 
 ---
 
@@ -33,6 +34,31 @@ GraphPalace is an embedded graph database that makes the **memory palace metapho
 
 ---
 
+## 📄 Research Paper
+
+**["GraphPalace: A Stigmergic Memory Palace Engine for AI Agents"](paper/graphpalace-paper.pdf)** — 18-page paper with full methodology, algorithms, and experimental evaluation.
+
+### Key Findings
+
+| Metric | Result | Target | Verdict |
+|--------|--------|--------|---------|
+| **Recall@10** (TF-IDF, 500 drawers) | **96%** | 96.6% (MemPalace) | ✅ Matches target |
+| **Same-wing A\* success** | **100%** | 90.9% (STAN_X) | ✅ Exceeds by 9.1 pts |
+| **Cross-wing A\* success** | **100%** | 90.9% (STAN_X) | ✅ Exceeds by 9.1 pts |
+| **A\* latency (same-wing)** | **8–21 µs** | <200 ms | ✅ 10,000× faster |
+| **A\* latency (cross-wing)** | **5–13 µs** | <500 ms | ✅ 38,000× faster |
+| **Insert throughput** | **32K–50K ops/sec** | — | ✅ Excellent |
+| **Search throughput (100 drawers)** | **14,948 qps** | <50 ms | ✅ 0.067 ms/query |
+| **Pheromone decay (100 drawers)** | **108,915 cycles/sec** | <500 ms | ✅ 9 µs/cycle |
+
+The paper reports results from the `gp-bench` benchmark suite run on release builds. The TF-IDF embedding engine (pure Rust, no model files) achieves recall comparable to MemPalace's all-MiniLM-L6-v2 transformer embeddings. A\* pathfinding through the palace hierarchy achieves 100% success for structured queries at microsecond latencies — over 10,000× faster than the original STAN_X implementation.
+
+**Soak test**: 500 swarm cycles × 5 Active Inference agents (Explorer, Exploiter, Balanced, Specialist, Generalist) = 2,500 actions with 100% agent productivity, validating stable pheromone dynamics and convergence detection.
+
+> 📥 **[Download the paper (PDF)](paper/graphpalace-paper.pdf)** · **[View LaTeX source](paper/graphpalace-paper.tex)**
+
+---
+
 ## Architecture
 
 ```
@@ -47,10 +73,10 @@ GraphPalace is an embedded graph database that makes the **memory palace metapho
 │              28 tools · JSON-RPC 2.0 · PALACE_PROTOCOL               │
 ├──────────┬─────────────┬──────────────┬───────────┬─────────────────┤
 │ gp-core  │gp-stigmergy │gp-pathfinding│ gp-agents │ gp-embeddings   │
-│  Types   │ 5 Pheromone │  Semantic    │  Active   │  ONNX Runtime   │
-│  Schema  │   Types     │    A*        │ Inference │  384-dim vecs   │
-│  Config  │  Decay +    │  Composite   │  Bayesian │  Cosine sim     │
-│  Errors  │  Cypher     │  Cost Model  │  Beliefs  │  LRU cache      │
+│  Types   │ 5 Pheromone │  Semantic    │  Active   │  TF-IDF (96%)   │
+│  Schema  │   Types     │    A*        │ Inference │  ONNX optional  │
+│  Config  │  Decay +    │  Composite   │  Bayesian │  384-dim vecs   │
+│  Errors  │  Cypher     │  Cost Model  │  Beliefs  │  Cosine sim     │
 ├──────────┴─────────────┴──────────────┴───────────┴─────────────────┤
 │                        gp-swarm                                      │
 │     SwarmCoordinator · ConvergenceDetector · InterestScore           │
@@ -92,7 +118,7 @@ Every node carries **exploitation** and **exploration** pheromones. Every edge c
 git clone https://github.com/web3guru888/GraphPalace.git
 cd GraphPalace/rust
 cargo build --release
-cargo test --workspace    # 438 tests, 0 failures
+cargo test --workspace    # 680 tests, 0 failures
 ```
 
 ### WASM Bundle (for browser)
@@ -153,7 +179,7 @@ GraphPalace is organized as a Rust workspace with 11 library crates + 2 binary/b
 | **[gp-pathfinding](rust/gp-pathfinding/)** | 50 | 1,556 | Semantic A\* with composite cost model (40% semantic + 30% pheromone + 30% structural), adaptive heuristic, provenance tracking, benchmark infrastructure |
 | **[gp-agents](rust/gp-agents/)** | 50 | 1,160 | Active Inference: EFE minimization, Bayesian belief updates, softmax action selection, temperature annealing (linear/exponential/cosine), 5 archetypes |
 | **[gp-swarm](rust/gp-swarm/)** | 50 | 1,228 | Multi-agent coordination: sense→decide→act→update cycle, 3-criteria convergence detection, interest scoring, periodic decay scheduling |
-| **[gp-embeddings](rust/gp-embeddings/)** | 23 | 465 | Embedding engine trait with mock implementation, cosine similarity, top-k search, LRU cache |
+| **[gp-embeddings](rust/gp-embeddings/)** | 34 | 865 | Embedding engine: TF-IDF (96% recall, pure Rust), Mock, ONNX (feature-gated). Cosine similarity, top-k search, LRU cache |
 | **[gp-storage](rust/gp-storage/)** | 60 | 2,628 | Storage backend: `StorageBackend` trait, `InMemoryBackend` (full CRUD + search), Kuzu C API FFI bindings (feature-gated), schema initialization, palace operations |
 | **[gp-palace](rust/gp-palace/)** | 63 | 1,888 | Unified orchestrator: `GraphPalace` struct, auto-hierarchy creation, search with pheromone boosting, A\* navigation, KG CRUD, export/import (Replace/Merge/Overlay) |
 | **[gp-mcp](rust/gp-mcp/)** | 84 | 2,129 | MCP server: JSON-RPC 2.0 message handling, 28 tool definitions with schemas, PALACE_PROTOCOL prompt generation with live stats |
@@ -162,7 +188,7 @@ GraphPalace is organized as a Rust workspace with 11 library crates + 2 binary/b
 | *[gp-cli](rust/gp-cli/)* | — | 335 | CLI binary stub: 12 subcommands (`init`, `search`, `navigate`, `add-drawer`, `status`, `export`, ...) via clap |
 | *[gp-python](rust/gp-python/)* | — | 147 | Python bindings stub via PyO3 + maturin: `Palace` class with `add_drawer()`, `search()`, `navigate()` |
 
-**Total: 604 tests · 18,000 LOC · 0 failures · 0 clippy warnings**
+**Total: 680 tests · 21,167 LOC · 0 failures · 0 clippy warnings**
 
 ---
 
@@ -337,18 +363,21 @@ See [`examples/graphpalace/`](examples/graphpalace/) for working code:
 
 ---
 
-## Performance Targets
+## Performance — Measured Results
 
-| Metric | Target | Basis |
-|--------|--------|-------|
-| Semantic search (top-10) | <50ms | Kuzu HNSW + cosine |
-| A\* pathfinding (cached) | <200ms | STAN_X achieves 211ms |
-| A\* pathfinding (uncached) | <500ms | STAN_X achieves 494ms |
-| Embedding generation | <100ms/text | ONNX Runtime |
-| Pheromone decay (10k edges) | <500ms | Bulk Cypher update |
-| WASM bundle size | <20MB | Kuzu ~10MB + model ~12MB |
-| Memory (1M drawers) | <2GB | Kuzu columnar storage |
-| Palace wake-up | <200 tokens | PALACE_PROTOCOL prompt |
+All benchmarks from `gp-bench` v0.1.0, release builds on `InMemoryBackend`. Full methodology in the [paper](paper/graphpalace-paper.pdf).
+
+| Metric | Target | **Measured** | Status |
+|--------|--------|-------------|--------|
+| Recall@10 (TF-IDF) | 96.6% (MemPalace) | **96–100%** | ✅ Matches |
+| A\* pathfinding (same-wing) | <200 ms | **8–21 µs** | ✅ 10,000× under |
+| A\* pathfinding (cross-wing) | <500 ms | **5–13 µs** | ✅ 38,000× under |
+| A\* success rate | 90.9% (STAN_X) | **100%** (structured) | ✅ Exceeds |
+| Insert throughput | — | **32K–50K ops/sec** | ✅ |
+| Search (100 drawers) | <50 ms | **0.067 ms** (14,948 qps) | ✅ |
+| Pheromone decay (100 drawers) | <500 ms / 10K edges | **9 µs/cycle** (109K/sec) | ✅ |
+| Export (500 drawers) | — | **6.8 ms** (146/sec) | ✅ |
+| Soak test (5 agents × 500 cycles) | Stable convergence | **100% productivity** | ✅ |
 
 ---
 
@@ -356,6 +385,7 @@ See [`examples/graphpalace/`](examples/graphpalace/) for working code:
 
 | Guide | Description |
 |-------|-------------|
+| **[Research Paper (PDF)](paper/graphpalace-paper.pdf)** | **18-page paper: algorithms, evaluation, 10 equations, 8+ tables, 19 references** |
 | [Architecture Overview](docs/architecture.md) | System layers, all 13 crates, dependency graph, data flow |
 | [Storage Backend](docs/storage.md) | `StorageBackend` trait, Kuzu FFI, `InMemoryBackend`, schema init |
 | [Palace Orchestrator](docs/palace.md) | `GraphPalace` struct, lifecycle, search, navigation, export/import |
