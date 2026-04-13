@@ -363,9 +363,15 @@ impl InMemoryBackend {
         }
         // Remove from the HNSW index.
         d.hnsw_index.remove(id);
-        // Remove edge pheromones/costs where drawer is involved
-        d.edge_pheromones.retain(|k, _| !k.contains(id));
-        d.edge_costs.retain(|k, _| !k.contains(id));
+        // Remove edge pheromones/costs where drawer is involved.
+        // Split on ':' and compare components exactly to avoid false positives
+        // (e.g. "drawer_1" matching "drawer_10").
+        d.edge_pheromones.retain(|k, _| {
+            k.split(':').all(|part| part != id)
+        });
+        d.edge_costs.retain(|k, _| {
+            k.split(':').all(|part| part != id)
+        });
         Ok(())
     }
 

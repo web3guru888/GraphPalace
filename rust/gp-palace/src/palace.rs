@@ -388,12 +388,7 @@ impl GraphPalace {
         let room_id = match rooms.iter().find(|r| r.name == room_name) {
             Some(r) => r.id.clone(),
             None => {
-                let room_emb = self
-                    .embeddings
-                    .encode(room_name)
-                    .map_err(|e| GraphPalaceError::Embedding(e.to_string()))?;
-                self.storage
-                    .create_room(&wing_id, room_name, HallType::Facts, room_name, room_emb)?
+                self.add_room(&wing_id, room_name, HallType::Facts)?
             }
         };
 
@@ -845,6 +840,7 @@ impl GraphPalace {
                 i += 1;
             }
         }
+        entities.sort();
         entities.dedup();
         entities
     }
@@ -995,6 +991,10 @@ impl GraphPalace {
                 }
             }
         }
+
+        // Rebuild HNSW index after Merge/Overlay to keep it in sync with drawers.
+        // Replace already calls restore() which rebuilds, so this is a no-op there.
+        self.storage.rebuild_hnsw_index();
 
         Ok(stats)
     }

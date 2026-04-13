@@ -4,6 +4,14 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
+/// Truncate a string to at most `max` characters, safe for multi-byte UTF-8.
+fn truncate_str(s: &str, max: usize) -> &str {
+    match s.char_indices().nth(max) {
+        Some((idx, _)) => &s[..idx],
+        None => s,
+    }
+}
+
 use gp_core::config::GraphPalaceConfig;
 use gp_core::types::*;
 use gp_embeddings::engine::{auto_engine, EmbeddingEngine};
@@ -337,9 +345,11 @@ fn load_config(config_file: &str) -> GraphPalaceConfig {
         return GraphPalaceConfig::default();
     }
     let Ok(toml_str) = std::fs::read_to_string(config_file) else {
+        eprintln!("Warning: could not read config file '{config_file}', using defaults");
         return GraphPalaceConfig::default();
     };
     let Ok(table) = toml_str.parse::<toml::Table>() else {
+        eprintln!("Warning: could not parse config file '{config_file}' as TOML, using defaults");
         return GraphPalaceConfig::default();
     };
 
@@ -745,9 +755,13 @@ impl ToolHandler for PalaceToolHandler {
                 let subject = arguments.and_then(|a| a.get("subject")).and_then(|v| v.as_str());
                 let predicate = arguments.and_then(|a| a.get("predicate")).and_then(|v| v.as_str());
                 let object = arguments.and_then(|a| a.get("object")).and_then(|v| v.as_str());
+                let confidence = arguments
+                    .and_then(|a| a.get("confidence"))
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.5);
                 match (subject, predicate, object) {
                     (Some(s), Some(p), Some(o)) => {
-                        match self.palace.kg_add(s, p, o) {
+                        match self.palace.kg_add_with_confidence(s, p, o, confidence) {
                             Ok(id) => {
                                 self.auto_save();
                                 ToolCallResult::text(serde_json::json!({
@@ -1073,7 +1087,7 @@ fn main() -> Result<()> {
             println!("Added drawer {id}");
             println!("  Wing: {wing}");
             println!("  Room: {room}");
-            println!("  Content: {}...", &content[..content.len().min(80)]);
+            println!("  Content: {}...", truncate_str(&content, 80));
         }
         Commands::Search { query, wing, room, k } => {
             let mut palace = load_or_create_palace(&cli.db, &cli.config)?;
@@ -1095,7 +1109,7 @@ fn main() -> Result<()> {
                 for (i, r) in results.iter().enumerate() {
                     println!("  {}. [score={:.4}] [{}/{}]",
                         i + 1, r.score, r.wing_name, r.room_name);
-                    println!("     {}", &r.content[..r.content.len().min(120)]);
+                    println!("     {}", truncate_str(&r.content, 120));
                     println!("     id: {}\n", r.drawer_id);
                 }
             }
@@ -1133,14 +1147,20 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Export { output, format: _ } => {
+        Commands::Export { output, format } => {
+            if format == "cypher" {
+                anyhow::bail!("Cypher format is not yet supported. Use JSON (default).");
+            }
             let palace = load_or_create_palace(&cli.db, &cli.config)?;
             let export = palace.export()?;
             let json = export.to_json_pretty()?;
             std::fs::write(&output, &json)?;
             println!("Exported palace to {output} ({} bytes)", json.len());
         }
-        Commands::Import { input, format: _, mode } => {
+        Commands::Import { input, format, mode } => {
+            if format == "cypher" {
+                anyhow::bail!("Cypher format is not yet supported. Use JSON (default).");
+            }
             let palace = load_or_create_palace(&cli.db, &cli.config)?;
             let json = std::fs::read_to_string(&input)
                 .with_context(|| format!("reading {input}"))?;
@@ -1168,7 +1188,7 @@ fn main() -> Result<()> {
                     println!("{}", "-".repeat(80));
                     for w in &wings {
                         println!("{:<36} {:<20} {:<10} {}",
-                            w.id, w.name, w.wing_type, &w.description[..w.description.len().min(30)]);
+                            w.id, w.name, w.wing_type, truncate_str(&w.description, 30));
                     }
                 }
             }
@@ -1346,7 +1366,10 @@ fn main() -> Result<()> {
                 }
             }
         },
-        Commands::Serve { port: _, bind: _, token } => {
+        Commands::Serve { port, bind, token } => {
+            if port != 3000 || bind != "127.0.0.1" {
+                eprintln!("Warning: --port and --bind are reserved for future HTTP transport. Currently using stdio.");
+            }
             let palace = load_or_create_palace(&cli.db, &cli.config)?;
             let handler = PalaceToolHandler { palace, db_path: cli.db.clone() };
             let mut server = McpServer::with_handler(Box::new(handler));

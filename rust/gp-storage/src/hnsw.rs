@@ -6,7 +6,6 @@
 
 use gp_core::Embedding;
 use gp_embeddings::similarity::cosine_similarity;
-use rand::Rng as _;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
 // ---------------------------------------------------------------------------
