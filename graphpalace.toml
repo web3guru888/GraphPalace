@@ -1,0 +1,43 @@
+# GraphPalace Configuration
+# See: https://github.com/web3guru888/GraphPalace
+
+[palace]
+name = "My Palace"
+embedding_model = "all-MiniLM-L6-v2"
+embedding_dim = 384
+
+[pheromones]
+exploitation_decay = 0.02
+exploration_decay = 0.05
+success_decay = 0.01
+traversal_decay = 0.03
+recency_decay = 0.10
+decay_interval_cycles = 10
+
+[cost_weights]
+semantic = 0.4
+pheromone = 0.3
+structural = 0.3
+
+[astar]
+max_iterations = 10000
+cross_domain_threshold = 0.3
+
+[agents]
+default_temperature = 0.5
+annealing_schedule = "cosine"
+belief_prior_mean = 20.0
+belief_prior_precision = 0.1
+
+[swarm]
+num_agents = 5
+max_cycles = 1000
+convergence_window = 20
+growth_threshold = 5.0
+variance_threshold = 0.05
+frontier_threshold = 10
+
+[cache]
+embedding_ttl_seconds = 3600
+search_ttl_seconds = 300
+max_cache_entries = 10000

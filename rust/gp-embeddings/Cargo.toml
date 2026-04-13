@@ -1,0 +1,15 @@
+[package]
+name = "gp-embeddings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Embedding vectors and similarity: cosine distance, vector quantisation, embedding store"
+
+[dependencies]
+gp-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+rand = { workspace = true }
+
+[dev-dependencies]

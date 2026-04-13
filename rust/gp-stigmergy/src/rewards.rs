@@ -1,0 +1,228 @@
+//! Pheromone reward deposits (spec §4.3).
+//!
+//! After a successful search, pheromones are deposited along the path
+//! to reinforce good connections and mark valuable locations.
+//!
+//! Position weighting ensures earlier edges in the path receive more
+//! reward, biasing future searches toward the beginning of successful routes.
+
+use gp_core::types::{EdgePheromones, NodePheromones};
+
+/// Traversal increment per edge in a successful path.
+pub const TRAVERSAL_INCREMENT: f64 = 0.1;
+
+/// Recency value deposited on each edge (always set to maximum).
+pub const RECENCY_VALUE: f64 = 1.0;
+
+/// Exploitation increment for each node on a successful path.
+pub const EXPLOITATION_INCREMENT: f64 = 0.2;
+
+/// Exploration increment when a node is explored (visited during search).
+pub const EXPLORATION_INCREMENT: f64 = 0.3;
+
+/// Deposit pheromones along a successful search path.
+///
+/// For a path of length `n`:
+/// - Each **edge** at position `i` receives:
+///   - `success += base_reward × (1.0 - i / n)` — position-weighted reward
+///   - `traversal += 0.1` — frequency signal
+///   - `recency = 1.0` — freshness signal (reset, not additive)
+/// - Each **node** receives:
+///   - `exploitation += 0.2` — value signal
+///
+/// The `edges` and `nodes` slices must correspond to the same path.
+/// A path with N nodes typically has N-1 edges, but this function
+/// operates on whatever slices are provided.
+///
+/// # Arguments
+/// - `edges`: mutable slice of edge pheromones along the path (in path order)
+/// - `nodes`: mutable slice of node pheromones along the path
+/// - `base_reward`: base reward amount for the success pheromone
+pub fn deposit_path_success(
+    edges: &mut [EdgePheromones],
+    nodes: &mut [NodePheromones],
+    base_reward: f64,
+) {
+    let path_len = edges.len() as f64;
+
+    // Deposit on edges with position-weighted success reward
+    if path_len > 0.0 {
+        for (i, edge) in edges.iter_mut().enumerate() {
+            let position_weight = 1.0 - (i as f64 / path_len);
+            edge.success += base_reward * position_weight;
+            edge.traversal += TRAVERSAL_INCREMENT;
+            edge.recency = RECENCY_VALUE;
+        }
+    }
+
+    // Deposit on nodes
+    for node in nodes.iter_mut() {
+        node.exploitation += EXPLOITATION_INCREMENT;
+    }
+}
+
+/// Deposit exploration pheromone on a node that has been visited during search.
+///
+/// This signals "already searched — try elsewhere" to future agents,
+/// promoting diversity in the search swarm.
+pub fn deposit_exploration(pheromones: &mut NodePheromones) {
+    pheromones.exploration += EXPLORATION_INCREMENT;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─── Path deposit ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_deposit_path_success_single_edge() {
+        let mut edges = vec![EdgePheromones::default()];
+        let mut nodes = vec![NodePheromones::default(), NodePheromones::default()];
+        let base_reward = 1.0;
+
+        deposit_path_success(&mut edges, &mut nodes, base_reward);
+
+        // Single edge at position 0: weight = 1.0 - 0/1 = 1.0
+        assert!((edges[0].success - 1.0).abs() < 1e-12);
+        assert!((edges[0].traversal - TRAVERSAL_INCREMENT).abs() < 1e-12);
+        assert!((edges[0].recency - RECENCY_VALUE).abs() < 1e-12);
+
+        // Both nodes get exploitation
+        assert!((nodes[0].exploitation - EXPLOITATION_INCREMENT).abs() < 1e-12);
+        assert!((nodes[1].exploitation - EXPLOITATION_INCREMENT).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_deposit_path_success_position_weighting() {
+        let mut edges = vec![
+            EdgePheromones::default(),
+            EdgePheromones::default(),
+            EdgePheromones::default(),
+            EdgePheromones::default(),
+        ];
+        let mut nodes = vec![NodePheromones::default(); 5];
+        let base_reward = 2.0;
+
+        deposit_path_success(&mut edges, &mut nodes, base_reward);
+
+        // Path len = 4
+        // Edge 0: weight = 1.0 - 0/4 = 1.00, success = 2.0 × 1.00 = 2.0
+        // Edge 1: weight = 1.0 - 1/4 = 0.75, success = 2.0 × 0.75 = 1.5
+        // Edge 2: weight = 1.0 - 2/4 = 0.50, success = 2.0 × 0.50 = 1.0
+        // Edge 3: weight = 1.0 - 3/4 = 0.25, success = 2.0 × 0.25 = 0.5
+        assert!((edges[0].success - 2.0).abs() < 1e-12);
+        assert!((edges[1].success - 1.5).abs() < 1e-12);
+        assert!((edges[2].success - 1.0).abs() < 1e-12);
+        assert!((edges[3].success - 0.5).abs() < 1e-12);
+
+        // All edges get same traversal and recency
+        for edge in &edges {
+            assert!((edge.traversal - TRAVERSAL_INCREMENT).abs() < 1e-12);
+            assert!((edge.recency - RECENCY_VALUE).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn test_deposit_is_additive() {
+        let mut edges = vec![EdgePheromones {
+            success: 0.5,
+            traversal: 0.3,
+            recency: 0.2,
+        }];
+        let mut nodes = vec![NodePheromones {
+            exploitation: 0.1,
+            exploration: 0.0,
+        }];
+
+        deposit_path_success(&mut edges, &mut nodes, 1.0);
+
+        // success is additive: 0.5 + 1.0 × 1.0 = 1.5
+        assert!((edges[0].success - 1.5).abs() < 1e-12);
+        // traversal is additive: 0.3 + 0.1 = 0.4
+        assert!((edges[0].traversal - 0.4).abs() < 1e-12);
+        // recency is set (not additive): = 1.0
+        assert!((edges[0].recency - 1.0).abs() < 1e-12);
+        // exploitation is additive: 0.1 + 0.2 = 0.3
+        assert!((nodes[0].exploitation - 0.3).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_deposit_path_success_empty_edges() {
+        let mut edges: Vec<EdgePheromones> = vec![];
+        let mut nodes = vec![NodePheromones::default()];
+
+        deposit_path_success(&mut edges, &mut nodes, 1.0);
+
+        // Node still gets exploitation even with no edges
+        assert!((nodes[0].exploitation - EXPLOITATION_INCREMENT).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_deposit_path_success_empty_both() {
+        let mut edges: Vec<EdgePheromones> = vec![];
+        let mut nodes: Vec<NodePheromones> = vec![];
+
+        // Should not panic
+        deposit_path_success(&mut edges, &mut nodes, 1.0);
+    }
+
+    #[test]
+    fn test_deposit_path_success_zero_reward() {
+        let mut edges = vec![EdgePheromones::default()];
+        let mut nodes = vec![NodePheromones::default()];
+
+        deposit_path_success(&mut edges, &mut nodes, 0.0);
+
+        // Success should be 0 (0 × weight), but traversal/recency still applied
+        assert_eq!(edges[0].success, 0.0);
+        assert!((edges[0].traversal - TRAVERSAL_INCREMENT).abs() < 1e-12);
+        assert!((edges[0].recency - RECENCY_VALUE).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_position_weight_sum() {
+        // Total reward deposited should be base_reward × Σ(1 - i/n) for i in 0..n
+        // = base_reward × n × (n+1)/(2n) = base_reward × (n+1)/2
+        let n = 10;
+        let base_reward = 1.0;
+        let mut edges = vec![EdgePheromones::default(); n];
+        let mut nodes = vec![NodePheromones::default(); n + 1];
+
+        deposit_path_success(&mut edges, &mut nodes, base_reward);
+
+        let total_success: f64 = edges.iter().map(|e| e.success).sum();
+        // Σ(1 - i/10) for i=0..10 = 10 - (0+1+...+9)/10 = 10 - 45/10 = 10 - 4.5 = 5.5
+        assert!((total_success - 5.5).abs() < 1e-10);
+    }
+
+    // ─── Exploration deposit ──────────────────────────────────────────────
+
+    #[test]
+    fn test_deposit_exploration() {
+        let mut p = NodePheromones::default();
+        deposit_exploration(&mut p);
+        assert!((p.exploration - EXPLORATION_INCREMENT).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_deposit_exploration_additive() {
+        let mut p = NodePheromones {
+            exploitation: 0.0,
+            exploration: 0.5,
+        };
+        deposit_exploration(&mut p);
+        assert!((p.exploration - 0.8).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_deposit_exploration_does_not_affect_exploitation() {
+        let mut p = NodePheromones {
+            exploitation: 0.7,
+            exploration: 0.0,
+        };
+        deposit_exploration(&mut p);
+        assert!((p.exploitation - 0.7).abs() < 1e-12);
+        assert!((p.exploration - EXPLORATION_INCREMENT).abs() < 1e-12);
+    }
+}

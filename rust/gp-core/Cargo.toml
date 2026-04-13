@@ -1,0 +1,17 @@
+[package]
+name = "gp-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core types for GraphPalace: nodes, edges, pheromone fields, config, errors"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde-big-array = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+ordered-float = { workspace = true }
+
+[dev-dependencies]
