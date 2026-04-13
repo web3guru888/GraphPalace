@@ -1,0 +1,20 @@
+{
+  "name": "@graphpalace/core",
+  "version": "0.1.0",
+  "description": "Stigmergic Memory Palace Engine — WASM bindings",
+  "files": ["pkg/"],
+  "module": "pkg/graphpalace.js",
+  "types": "pkg/graphpalace.d.ts",
+  "repository": "https://github.com/web3guru888/GraphPalace",
+  "license": "MIT",
+  "keywords": [
+    "memory-palace",
+    "graph-database",
+    "stigmergy",
+    "active-inference",
+    "knowledge-graph",
+    "wasm",
+    "ai-memory",
+    "semantic-search"
+  ]
+}

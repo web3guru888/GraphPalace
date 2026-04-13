@@ -13,6 +13,7 @@
 //!   (spec §5.4).
 
 pub mod astar;
+pub mod bench;
 pub mod edge_cost;
 pub mod heuristic;
 pub mod provenance;

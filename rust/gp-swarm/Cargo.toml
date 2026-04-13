@@ -1,17 +1,18 @@
 [package]
-name = "gp-wasm"
+name = "gp-swarm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "WebAssembly bindings for GraphPalace core types and graph operations"
+description = "Swarm coordination: multi-agent cycles, convergence detection, interest scoring, and decay scheduling"
 
 [dependencies]
 gp-core = { workspace = true }
+gp-agents = { workspace = true }
 gp-stigmergy = { workspace = true }
+gp-pathfinding = { workspace = true }
 gp-embeddings = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
-chrono = { workspace = true }
+rand = { workspace = true }
 
 [dev-dependencies]

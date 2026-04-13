@@ -182,10 +182,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "gp-swarm"
+version = "0.1.0"
+dependencies = [
+ "gp-agents",
+ "gp-core",
+ "gp-embeddings",
+ "gp-pathfinding",
+ "gp-stigmergy",
+ "rand",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gp-wasm"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "gp-core",
+ "gp-embeddings",
+ "gp-stigmergy",
  "serde",
  "serde_json",
  "thiserror",

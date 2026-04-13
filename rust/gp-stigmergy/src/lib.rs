@@ -8,14 +8,17 @@
 //! - [`decay`]: Exponential pheromone decay (§4.2)
 //! - [`rewards`]: Position-weighted path reward deposits (§4.3)
 //! - [`cost`]: Pheromone-modulated edge cost recomputation (§4.4)
+//! - [`cypher`]: Cypher query generation for bulk pheromone operations (§4.2)
 
 pub mod cost;
+pub mod cypher;
 pub mod decay;
 pub mod pheromones;
 pub mod rewards;
 
 // Re-export key items at crate root for convenience.
 pub use cost::{pheromone_factor, recompute_edge_cost};
+pub use cypher::{CypherQuery, CypherValue};
 pub use decay::{
     bulk_decay_edges, bulk_decay_nodes, decay, decay_edge_pheromones, decay_node_pheromones,
     PHEROMONE_FLOOR,

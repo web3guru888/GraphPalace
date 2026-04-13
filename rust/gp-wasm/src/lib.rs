@@ -1,13 +1,19 @@
 //! `gp-wasm` — WebAssembly bindings for GraphPalace.
 //!
-//! This crate will provide wasm-bindgen entry points for running
-//! GraphPalace in the browser. Currently contains type stubs.
+//! Provides a complete in-memory palace implementation and browser
+//! integration types including:
 //!
-//! Phase 6 will add:
-//! - wasm-bindgen annotations
-//! - JavaScript-facing API
-//! - IndexedDB/OPFS persistence
-//! - Web Worker integration
+//! - [`palace`] — In-memory palace with full CRUD operations
+//! - [`js_api`] — JavaScript-facing API (GraphPalaceWasm)
+//! - [`worker`] — Web Worker message types for async operations
+//! - [`persistence`] — Storage backend traits (Memory, IndexedDB, OPFS)
 
 pub mod js_api;
 pub mod palace;
+pub mod persistence;
+pub mod worker;
+
+pub use js_api::GraphPalaceWasm;
+pub use palace::InMemoryPalace;
+pub use persistence::{ImportMode, MemoryPersistence, PalacePersistence, StorageBackend};
+pub use worker::{WorkerRequest, WorkerResponse};

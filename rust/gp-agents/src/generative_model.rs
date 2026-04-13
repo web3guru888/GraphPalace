@@ -95,7 +95,7 @@ impl GenerativeModel {
     pub fn observe(&mut self, key: &str, value: f64) {
         self.stats
             .entry(key.to_string())
-            .or_insert_with(WelfordStats::new)
+            .or_default()
             .update(value);
     }
 

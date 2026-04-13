@@ -5,17 +5,22 @@
 //! This crate defines:
 //! - **28 tool schemas** ([`tools`] module) covering palace navigation,
 //!   operations, knowledge graph, stigmergy, and agent diary.
-//! - **PALACE_PROTOCOL** ([`protocol`] module) — the system prompt preamble
-//!   that teaches LLM clients how to use the memory palace.
-//!
-//! Actual MCP protocol handling (JSON-RPC transport, session management)
-//! is planned for Phase 5.
+//! - **PALACE_PROTOCOL** ([`protocol`] module) — the static system prompt
+//!   preamble that teaches LLM clients how to use the memory palace.
+//! - **Palace Protocol** ([`palace_protocol`] module) — dynamic prompt
+//!   generation with live palace statistics injection.
+//! - **MCP Server** ([`server`] module) — JSON-RPC 2.0 server with tool
+//!   routing, capability negotiation, and prompt serving.
 
+pub mod palace_protocol;
 pub mod protocol;
+pub mod server;
 pub mod tools;
 
 // Re-exports for convenience
 pub use protocol::PALACE_PROTOCOL;
+pub use palace_protocol::{PalaceStats, generate_palace_protocol, generate_palace_protocol_minimal};
+pub use server::{McpServer, JsonRpcRequest, JsonRpcResponse, JsonRpcError, ToolCallResult};
 pub use tools::{
     // Palace Navigation
     PalaceStatus, ListWings, ListRooms, GetTaxonomy,

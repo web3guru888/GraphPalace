@@ -55,7 +55,7 @@ impl ActiveInferenceAgent {
         let belief = self
             .beliefs
             .entry(node_id.to_string())
-            .or_insert_with(BeliefState::default);
+            .or_default();
         belief.update(observation, precision);
     }
 }

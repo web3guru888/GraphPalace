@@ -7,6 +7,7 @@ members = [
     "gp-embeddings",
     "gp-mcp",
     "gp-wasm",
+    "gp-swarm",
 ]
 resolver = "2"
 
@@ -40,6 +41,7 @@ gp-pathfinding = { path = "gp-pathfinding" }
 gp-agents = { path = "gp-agents" }
 gp-embeddings = { path = "gp-embeddings" }
 gp-mcp = { path = "gp-mcp" }
+gp-swarm = { path = "gp-swarm" }
 
 [profile.release]
 opt-level = 3

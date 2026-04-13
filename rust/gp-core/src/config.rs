@@ -179,6 +179,7 @@ impl Default for PalaceConfig {
 
 /// Top-level configuration for GraphPalace.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct GraphPalaceConfig {
     pub palace: PalaceConfig,
     pub pheromones: PheromoneConfig,
@@ -189,16 +190,3 @@ pub struct GraphPalaceConfig {
     pub cache: CacheConfig,
 }
 
-impl Default for GraphPalaceConfig {
-    fn default() -> Self {
-        Self {
-            palace: PalaceConfig::default(),
-            pheromones: PheromoneConfig::default(),
-            cost_weights: CostWeights::default(),
-            astar: AStarConfig::default(),
-            agents: AgentConfig::default(),
-            swarm: SwarmConfig::default(),
-            cache: CacheConfig::default(),
-        }
-    }
-}
