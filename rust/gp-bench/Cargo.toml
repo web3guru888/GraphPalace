@@ -11,11 +11,14 @@ gp-palace = { workspace = true }
 gp-storage = { workspace = true }
 gp-pathfinding = { workspace = true }
 gp-stigmergy = { workspace = true }
+gp-agents = { workspace = true }
+gp-swarm = { workspace = true }
 gp-embeddings = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 rand = { workspace = true }
 chrono = { workspace = true }
+clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -23,6 +26,14 @@ criterion = { version = "0.5", features = ["html_reports"] }
 [[bin]]
 name = "run-benchmarks"
 path = "src/bin/run_benchmarks.rs"
+
+[[bin]]
+name = "soak-test"
+path = "src/bin/soak_test.rs"
+
+[[bin]]
+name = "run-benchmarks-tfidf"
+path = "src/bin/run_benchmarks_tfidf.rs"
 
 [[bench]]
 name = "palace_benchmarks"

@@ -5,6 +5,7 @@
 //! appears in the top-k results.
 
 use gp_core::types::Embedding;
+use gp_embeddings::EmbeddingEngine;
 use gp_palace::GraphPalace;
 use serde::{Deserialize, Serialize};
 
@@ -89,6 +90,107 @@ impl RecallBenchmark {
                 // *expected content* embedding and the result content.
                 // Since MockEmbeddingEngine is deterministic, matching on
                 // `content` string equality is the right check.
+                if res.content == query.expected_content {
+                    found_rank = Some(rank_0 + 1);
+                    break;
+                }
+            }
+
+            if let Some(rank) = found_rank {
+                rr_sum += 1.0 / rank as f64;
+                for (i, &k) in k_values.iter().enumerate() {
+                    if rank <= k {
+                        hits_at[i] += 1;
+                    }
+                }
+            }
+        }
+
+        let n = self.queries.len().max(1) as f64;
+        RecallResult {
+            recall_at_1: hits_at[0] as f64 / n,
+            recall_at_5: hits_at[1] as f64 / n,
+            recall_at_10: hits_at[2] as f64 / n,
+            recall_at_20: hits_at[3] as f64 / n,
+            mrr: rr_sum / n,
+            num_queries: self.queries.len(),
+            num_drawers: self.num_drawers,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TF-IDF recall benchmark
+// ---------------------------------------------------------------------------
+
+/// A recall benchmark using TF-IDF embeddings for semantically meaningful
+/// similarity. Unlike `RecallBenchmark` (which uses `MockEmbeddingEngine`),
+/// this measures recall with real semantic embeddings.
+pub struct TfIdfRecallBenchmark {
+    palace: GraphPalace,
+    queries: Vec<(BenchmarkQuery, Embedding)>,
+    num_drawers: usize,
+}
+
+impl TfIdfRecallBenchmark {
+    /// Create a TF-IDF recall benchmark.
+    ///
+    /// Build a palace with TF-IDF embeddings and prepare query embeddings.
+    /// Because TF-IDF vocabulary is shared, we extract the engine after
+    /// building the palace, encode queries with it, then return it.
+    pub fn new(num_drawers: usize, num_queries: usize, _seed: u64) -> Self {
+        use crate::generators::generate_palace_tfidf;
+
+        let wings: usize = 2;
+        let rooms_per_wing = 4;
+        let drawers_per_room = (num_drawers / (wings * rooms_per_wing)).max(1);
+
+        let (palace, contents) =
+            generate_palace_tfidf(wings, rooms_per_wing, drawers_per_room, 0);
+        let actual_drawers = contents.len();
+
+        let raw_queries = generate_queries(&contents, num_queries);
+
+        // Encode queries with a fresh TF-IDF engine. Since the engine
+        // learns vocabulary incrementally, we prime it with all contents
+        // first, then encode queries. This simulates the palace having
+        // the full vocabulary available.
+        let mut tfidf_engine = gp_embeddings::TfIdfEmbeddingEngine::new();
+        for (content, _, _) in &contents {
+            let _ = tfidf_engine.encode(content);
+        }
+
+        let queries: Vec<(BenchmarkQuery, Embedding)> = raw_queries
+            .into_iter()
+            .map(|q| {
+                let emb = tfidf_engine.encode(&q.query)
+                    .expect("TF-IDF query encoding should succeed");
+                (q, emb)
+            })
+            .collect();
+
+        Self {
+            palace,
+            queries,
+            num_drawers: actual_drawers,
+        }
+    }
+
+    /// Run all queries and compute recall / MRR.
+    pub fn run(&mut self) -> RecallResult {
+        let max_k: usize = 20;
+        let mut hits_at = [0usize; 4];
+        let k_values = [1, 5, 10, 20];
+        let mut rr_sum: f64 = 0.0;
+
+        for (query, query_emb) in &self.queries {
+            let results = self
+                .palace
+                .search_by_embedding(query_emb, max_k)
+                .unwrap_or_default();
+
+            let mut found_rank: Option<usize> = None;
+            for (rank_0, res) in results.iter().enumerate() {
                 if res.content == query.expected_content {
                     found_rank = Some(rank_0 + 1);
                     break;
@@ -258,6 +360,49 @@ mod tests {
         // recall@k should be non-decreasing with k.
         let ranks = vec![Some(1), Some(4), Some(8), Some(15), None];
         let r = compute_recall(&ranks);
+        assert!(r.recall_at_1 <= r.recall_at_5);
+        assert!(r.recall_at_5 <= r.recall_at_10);
+        assert!(r.recall_at_10 <= r.recall_at_20);
+    }
+
+    // ── TF-IDF recall ────────────────────────────────────────────────────
+
+    #[test]
+    fn tfidf_recall_benchmark_creation() {
+        let bench = TfIdfRecallBenchmark::new(20, 5, 0);
+        assert!(bench.num_drawers > 0);
+        assert_eq!(bench.queries.len(), 5);
+    }
+
+    #[test]
+    fn tfidf_recall_benchmark_run_produces_metrics() {
+        let mut bench = TfIdfRecallBenchmark::new(20, 5, 0);
+        let result = bench.run();
+        assert_eq!(result.num_queries, 5);
+        assert!(result.num_drawers > 0);
+        assert!(result.recall_at_1 >= 0.0 && result.recall_at_1 <= 1.0);
+        assert!(result.mrr >= 0.0 && result.mrr <= 1.0);
+    }
+
+    #[test]
+    fn tfidf_exact_match_has_high_recall() {
+        // TF-IDF: exact-match queries should have very high recall
+        // because the embedding of the query text is nearly identical
+        // to the stored drawer.
+        let mut bench = TfIdfRecallBenchmark::new(16, 8, 0);
+        let result = bench.run();
+        // Even-indexed queries are exact matches, so at least 50% at @1.
+        assert!(
+            result.recall_at_1 >= 0.3,
+            "expected TF-IDF recall@1 ≥ 0.3, got {}",
+            result.recall_at_1
+        );
+    }
+
+    #[test]
+    fn tfidf_recall_monotonicity() {
+        let mut bench = TfIdfRecallBenchmark::new(20, 10, 0);
+        let r = bench.run();
         assert!(r.recall_at_1 <= r.recall_at_5);
         assert!(r.recall_at_5 <= r.recall_at_10);
         assert!(r.recall_at_10 <= r.recall_at_20);

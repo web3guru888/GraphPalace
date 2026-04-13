@@ -204,6 +204,64 @@ pub fn embed_query(query: &str) -> Embedding {
 }
 
 // ---------------------------------------------------------------------------
+// TF-IDF palace generation
+// ---------------------------------------------------------------------------
+
+/// Build a [`GraphPalace`] using [`TfIdfEmbeddingEngine`] instead of mock.
+///
+/// Since TF-IDF produces real semantic embeddings, search results will be
+/// semantically meaningful — similar content returns higher cosine scores.
+///
+/// Returns `(palace, drawer_contents)` just like [`generate_palace`].
+pub fn generate_palace_tfidf(
+    num_wings: usize,
+    rooms_per_wing: usize,
+    drawers_per_room: usize,
+    _seed: u64,
+) -> (GraphPalace, Vec<(String, String, String)>) {
+    use gp_embeddings::TfIdfEmbeddingEngine;
+
+    let config = GraphPalaceConfig::default();
+    let storage = InMemoryBackend::new();
+    let engine = Box::new(TfIdfEmbeddingEngine::new());
+    let mut palace = GraphPalace::new(config, storage, engine)
+        .expect("palace creation should succeed");
+
+    let mut contents: Vec<(String, String, String)> = Vec::new();
+    let mut snippet_idx: usize = 0;
+
+    for w in 0..num_wings {
+        let wing_name = WING_NAMES[w % WING_NAMES.len()];
+
+        for r in 0..rooms_per_wing {
+            let room_name = ROOM_TOPICS[r % ROOM_TOPICS.len()];
+
+            for d in 0..drawers_per_room {
+                let base = CONTENT_SNIPPETS[snippet_idx % CONTENT_SNIPPETS.len()];
+                let content = format!("{base} (w{w} r{r} d{d})");
+                snippet_idx += 1;
+
+                palace
+                    .add_drawer(&content, wing_name, room_name, DrawerSource::Conversation)
+                    .expect("add_drawer should succeed");
+
+                contents.push((content, wing_name.to_string(), room_name.to_string()));
+            }
+        }
+    }
+
+    (palace, contents)
+}
+
+/// Generate an embedding for a query using a [`TfIdfEmbeddingEngine`].
+///
+/// The engine must be the **same instance** that was used to build the palace
+/// (so that vocabulary and IDF statistics match). Pass it in by reference.
+pub fn embed_query_tfidf(query: &str, engine: &mut gp_embeddings::TfIdfEmbeddingEngine) -> Embedding {
+    engine.encode(query).expect("query encoding should succeed")
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -304,5 +362,41 @@ mod tests {
         let e1 = embed_query("same query");
         let e2 = embed_query("same query");
         assert_eq!(e1, e2);
+    }
+
+    #[test]
+    fn generate_palace_tfidf_creates_correct_structure() {
+        let (palace, contents) = generate_palace_tfidf(2, 3, 4, 0);
+        let status = palace.status().unwrap();
+        assert_eq!(status.wing_count, 2);
+        assert_eq!(status.room_count, 6);
+        assert_eq!(status.drawer_count, 24);
+        assert_eq!(contents.len(), 24);
+    }
+
+    #[test]
+    fn generate_palace_tfidf_single_wing() {
+        let (palace, contents) = generate_palace_tfidf(1, 1, 1, 0);
+        let status = palace.status().unwrap();
+        assert_eq!(status.wing_count, 1);
+        assert_eq!(status.drawer_count, 1);
+        assert_eq!(contents.len(), 1);
+    }
+
+    #[test]
+    fn generate_palace_tfidf_search_returns_results() {
+        let (mut palace, _) = generate_palace_tfidf(1, 2, 5, 0);
+        let results = palace.search_mut("quantum entanglement", 5).unwrap();
+        assert!(!results.is_empty(), "TF-IDF search should return results");
+    }
+
+    #[test]
+    fn embed_query_tfidf_works() {
+        let mut engine = gp_embeddings::TfIdfEmbeddingEngine::new();
+        // Train with some text first
+        engine.encode("training text").unwrap();
+        let emb = embed_query_tfidf("test query", &mut engine);
+        let norm: f64 = emb.iter().map(|x| (*x as f64) * (*x as f64)).sum::<f64>().sqrt();
+        assert!((norm - 1.0).abs() < 1e-4, "embedding should be unit-normalised");
     }
 }
