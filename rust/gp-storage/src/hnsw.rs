@@ -137,8 +137,7 @@ impl HnswIndex {
         let r: f64 = rand::Rng::r#gen::<f64>(&mut rng); // (0, 1]
         // Clamp to avoid log(0).
         let r = r.max(1e-15);
-        let level = (-r.ln() * self.config.ml).floor() as usize;
-        level
+        (-r.ln() * self.config.ml).floor() as usize
     }
 
     // -- Similarity helper ---------------------------------------------------
@@ -194,8 +193,8 @@ impl HnswIndex {
             }
 
             // Expand neighbors of this candidate at the given level.
-            if let Some(node) = self.nodes.get(&best.id) {
-                if let Some(neighbors) = node.neighbors.get(level) {
+            if let Some(node) = self.nodes.get(&best.id)
+                && let Some(neighbors) = node.neighbors.get(level) {
                     for neighbor_id in neighbors {
                         if visited.insert(neighbor_id.clone()) {
                             let sim = self.similarity(neighbor_id, query);
@@ -213,8 +212,8 @@ impl HnswIndex {
                                 results.push((neighbor_id.clone(), sim));
 
                                 // Evict worst if over capacity.
-                                if results.len() > ef {
-                                    if let Some(min_idx) = results
+                                if results.len() > ef
+                                    && let Some(min_idx) = results
                                         .iter()
                                         .enumerate()
                                         .min_by(|a, b| {
@@ -226,12 +225,10 @@ impl HnswIndex {
                                     {
                                         results.swap_remove(min_idx);
                                     }
-                                }
                             }
                         }
                     }
                 }
-            }
         }
 
         // Sort descending by similarity.
@@ -248,8 +245,8 @@ impl HnswIndex {
 
         loop {
             let mut changed = false;
-            if let Some(node) = self.nodes.get(&current) {
-                if let Some(neighbors) = node.neighbors.get(level) {
+            if let Some(node) = self.nodes.get(&current)
+                && let Some(neighbors) = node.neighbors.get(level) {
                     for nid in neighbors {
                         let sim = self.similarity(nid, query);
                         if sim > current_sim {
@@ -259,7 +256,6 @@ impl HnswIndex {
                         }
                     }
                 }
-            }
             if !changed {
                 break;
             }
@@ -312,11 +308,10 @@ impl HnswIndex {
 
         if let Some(candidates) = to_prune {
             let kept = Self::select_neighbors(&candidates, m);
-            if let Some(node) = self.nodes.get_mut(node_id) {
-                if let Some(nbrs) = node.neighbors.get_mut(level) {
+            if let Some(node) = self.nodes.get_mut(node_id)
+                && let Some(nbrs) = node.neighbors.get_mut(level) {
                     *nbrs = kept;
                 }
-            }
         }
     }
 
@@ -368,11 +363,10 @@ impl HnswIndex {
             let selected = Self::select_neighbors(&neighbors, self.config.m);
 
             // Connect new node → selected neighbors.
-            if let Some(node) = self.nodes.get_mut(id) {
-                if let Some(nbrs) = node.neighbors.get_mut(level) {
+            if let Some(node) = self.nodes.get_mut(id)
+                && let Some(nbrs) = node.neighbors.get_mut(level) {
                     *nbrs = selected.clone();
                 }
-            }
 
             // Connect selected neighbors → new node (bidirectional).
             for neighbor_id in &selected {
@@ -382,11 +376,10 @@ impl HnswIndex {
                     while neighbor_node.neighbors.len() <= level {
                         neighbor_node.neighbors.push(Vec::new());
                     }
-                    if let Some(nbrs) = neighbor_node.neighbors.get_mut(level) {
-                        if !nbrs.contains(&id.to_string()) {
+                    if let Some(nbrs) = neighbor_node.neighbors.get_mut(level)
+                        && !nbrs.contains(&id.to_string()) {
                             nbrs.push(id.to_string());
                         }
-                    }
                 }
                 // Prune if over capacity.
                 self.prune_neighbors(neighbor_id, level);
@@ -422,11 +415,10 @@ impl HnswIndex {
         // Remove references to this node from all its neighbors.
         for (level, neighbors) in node.neighbors.iter().enumerate() {
             for neighbor_id in neighbors {
-                if let Some(neighbor_node) = self.nodes.get_mut(neighbor_id) {
-                    if let Some(nbrs) = neighbor_node.neighbors.get_mut(level) {
+                if let Some(neighbor_node) = self.nodes.get_mut(neighbor_id)
+                    && let Some(nbrs) = neighbor_node.neighbors.get_mut(level) {
                         nbrs.retain(|n| n != id);
                     }
-                }
             }
         }
 

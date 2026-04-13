@@ -231,7 +231,7 @@ impl<'a> GraphAccess for BackendGraphAccess<'a> {
         }
 
         // Hall edges: room→room within the same wing
-        for (key, _wing_id) in &d.halls {
+        for key in d.halls.keys() {
             let parts: Vec<&str> = key.split(':').collect();
             if parts.len() != 2 { continue; }
             if parts[0] != id { continue; }
@@ -813,14 +813,14 @@ impl GraphPalace {
         let mut i = 0;
         while i < words.len() {
             let word = words[i].trim_matches(|c: char| !c.is_alphanumeric());
-            if word.len() >= 2 && word.chars().next().map_or(false, |c| c.is_uppercase())
+            if word.len() >= 2 && word.chars().next().is_some_and(|c| c.is_uppercase())
                && !word.chars().all(|c| c.is_uppercase()) // skip ALL-CAPS
             {
                 // Start of a potential entity — collect consecutive capitalized words
                 let start = i;
                 while i < words.len() {
                     let w = words[i].trim_matches(|c: char| !c.is_alphanumeric());
-                    if w.len() >= 2 && w.chars().next().map_or(false, |c| c.is_uppercase()) {
+                    if w.len() >= 2 && w.chars().next().is_some_and(|c| c.is_uppercase()) {
                         i += 1;
                     } else {
                         break;

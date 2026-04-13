@@ -416,13 +416,11 @@ fn load_config(config_file: &str) -> GraphPalaceConfig {
 /// Load config from the palace's saved config.json, falling back to defaults.
 fn load_palace_config(db_path: &str, config_file: &str) -> GraphPalaceConfig {
     let cpath = config_path(db_path);
-    if Path::new(&cpath).exists() {
-        if let Ok(json) = std::fs::read_to_string(&cpath) {
-            if let Ok(config) = serde_json::from_str::<GraphPalaceConfig>(&json) {
+    if Path::new(&cpath).exists()
+        && let Ok(json) = std::fs::read_to_string(&cpath)
+            && let Ok(config) = serde_json::from_str::<GraphPalaceConfig>(&json) {
                 return config;
             }
-        }
-    }
     load_config(config_file)
 }
 
@@ -1184,7 +1182,7 @@ fn main() -> Result<()> {
                 if wings.is_empty() {
                     println!("No wings found. Use 'graphpalace wing add' to create one.");
                 } else {
-                    println!("{:<36} {:<20} {:<10} {}", "ID", "NAME", "TYPE", "DESCRIPTION");
+                    println!("{:<36} {:<20} {:<10} DESCRIPTION", "ID", "NAME", "TYPE");
                     println!("{}", "-".repeat(80));
                     for w in &wings {
                         println!("{:<36} {:<20} {:<10} {}",
@@ -1391,8 +1389,8 @@ fn main() -> Result<()> {
                 }
 
                 // Simple bearer token auth: first non-empty line can be "AUTH <token>"
-                if !authenticated {
-                    if let Some(ref expected) = token {
+                if !authenticated
+                    && let Some(ref expected) = token {
                         // Check for auth in the JSON-RPC params
                         if let Ok(req) = serde_json::from_str::<Value>(&line) {
                             let provided = req.get("params")
@@ -1414,7 +1412,6 @@ fn main() -> Result<()> {
                             }
                         }
                     }
-                }
 
                 let response = server.handle_json(&line);
                 writeln!(stdout, "{response}")?;
