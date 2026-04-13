@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 description = "Comprehensive benchmark suite for GraphPalace"
 
+[features]
+default = []
+onnx = ["gp-embeddings/onnx"]
+download = ["gp-embeddings/download", "onnx"]
+
 [dependencies]
 gp-core = { workspace = true }
 gp-palace = { workspace = true }
@@ -14,6 +19,7 @@ gp-stigmergy = { workspace = true }
 gp-agents = { workspace = true }
 gp-swarm = { workspace = true }
 gp-embeddings = { workspace = true }
+gp-mcp = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 rand = { workspace = true }
@@ -34,6 +40,10 @@ path = "src/bin/soak_test.rs"
 [[bin]]
 name = "run-benchmarks-tfidf"
 path = "src/bin/run_benchmarks_tfidf.rs"
+
+[[bin]]
+name = "onnx-eval"
+path = "src/bin/onnx_eval.rs"
 
 [[bench]]
 name = "palace_benchmarks"

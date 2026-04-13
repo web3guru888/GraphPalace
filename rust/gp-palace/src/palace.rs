@@ -230,6 +230,32 @@ impl<'a> GraphAccess for BackendGraphAccess<'a> {
             }
         }
 
+        // Hall edges: room→room within the same wing
+        for (key, _wing_id) in &d.halls {
+            let parts: Vec<&str> = key.split(':').collect();
+            if parts.len() != 2 { continue; }
+            if parts[0] != id { continue; }
+            let other = parts[1];
+            if let Some(r) = d.rooms.get(other) {
+                let degree = Self::degree_of(&d, other);
+                let edge = Self::edge_for_key(&d, id, other, "HALL");
+                neighbors.push((edge, Self::node_from_room(r, degree)));
+            }
+        }
+
+        // Tunnel edges: room→room across wings
+        for key in d.tunnels.keys() {
+            let parts: Vec<&str> = key.split(':').collect();
+            if parts.len() != 2 { continue; }
+            if parts[0] != id { continue; }
+            let other = parts[1];
+            if let Some(r) = d.rooms.get(other) {
+                let degree = Self::degree_of(&d, other);
+                let edge = Self::edge_for_key(&d, id, other, "TUNNEL");
+                neighbors.push((edge, Self::node_from_room(r, degree)));
+            }
+        }
+
         neighbors
     }
 }
@@ -300,6 +326,8 @@ impl GraphPalace {
     }
 
     /// Create a new room in a wing.
+    ///
+    /// Automatically creates HALL edges to all existing rooms in the same wing.
     pub fn add_room(
         &mut self,
         wing_id: &str,
@@ -310,8 +338,20 @@ impl GraphPalace {
             .embeddings
             .encode(name)
             .map_err(|e| GraphPalaceError::Embedding(e.to_string()))?;
-        self.storage
-            .create_room(wing_id, name, hall_type, name, embedding)
+
+        // Get existing rooms in this wing BEFORE adding the new one
+        let existing_rooms: Vec<String> = self.storage.list_rooms(wing_id)
+            .iter().map(|r| r.id.clone()).collect();
+
+        let room_id = self.storage
+            .create_room(wing_id, name, hall_type, name, embedding)?;
+
+        // Create hall edges to all existing rooms in the same wing
+        for existing_id in &existing_rooms {
+            self.storage.create_hall(&room_id, existing_id, wing_id);
+        }
+
+        Ok(room_id)
     }
 
     /// Store a new memory (drawer) in the palace.
@@ -361,8 +401,18 @@ impl GraphPalace {
         let closet_id = self.find_or_create_general_closet(&room_id)?;
 
         // Create drawer
-        self.storage
-            .create_drawer(&closet_id, content, embedding, source, None, 0.5)
+        let drawer_id = self.storage
+            .create_drawer(&closet_id, content, embedding, source, None, 0.5)?;
+
+        // Auto-extract entities and create REFERENCES edges
+        let entities = Self::extract_entity_names(content);
+        for entity_name in &entities {
+            let entity_id = self.find_or_create_entity(entity_name)?;
+            // Store reference as a relationship
+            self.storage.add_relationship(&drawer_id, "REFERENCES", &entity_id, 0.8).ok();
+        }
+
+        Ok(drawer_id)
     }
 
     /// Find the "General" closet in a room, or create one.
@@ -554,13 +604,21 @@ impl GraphPalace {
         predicate: &str,
         object: &str,
     ) -> Result<String> {
-        // Find or create subject entity
+        self.kg_add_with_confidence(subject, predicate, object, 0.5)
+    }
+
+    /// Add a relationship triple with a specified confidence score.
+    pub fn kg_add_with_confidence(
+        &mut self,
+        subject: &str,
+        predicate: &str,
+        object: &str,
+        confidence: f64,
+    ) -> Result<String> {
         let subj_id = self.find_or_create_entity(subject)?;
-        // Find or create object entity
         let obj_id = self.find_or_create_entity(object)?;
-        // Add relationship
         self.storage
-            .add_relationship(&subj_id, predicate, &obj_id, 0.5)
+            .add_relationship(&subj_id, predicate, &obj_id, confidence)
     }
 
     /// Query knowledge graph relationships involving an entity.
@@ -654,6 +712,77 @@ impl GraphPalace {
     /// Return the count of similarity edges in the palace.
     pub fn similarity_edge_count(&self) -> usize {
         self.storage.similarity_edge_count()
+    }
+
+    // -- Tunnels ------------------------------------------------------------
+
+    /// Create tunnel edges between rooms in different wings that share similar topics.
+    /// Uses embedding similarity to determine which rooms should be connected.
+    pub fn build_tunnels(&self, threshold: f32) -> Result<usize> {
+        let wings = self.storage.list_wings();
+        let mut count = 0;
+        let mut all_rooms: Vec<(String, String, Embedding)> = Vec::new(); // (room_id, wing_id, embedding)
+
+        for wing in &wings {
+            for room in self.storage.list_rooms(&wing.id) {
+                all_rooms.push((room.id.clone(), wing.id.clone(), room.embedding));
+            }
+        }
+
+        for i in 0..all_rooms.len() {
+            for j in (i+1)..all_rooms.len() {
+                // Only connect rooms in DIFFERENT wings
+                if all_rooms[i].1 == all_rooms[j].1 { continue; }
+                let sim = gp_embeddings::cosine_similarity(&all_rooms[i].2, &all_rooms[j].2);
+                if sim >= threshold {
+                    self.storage.create_tunnel(&all_rooms[i].0, &all_rooms[j].0);
+                    count += 1;
+                }
+            }
+        }
+        Ok(count)
+    }
+
+    // -- Entity extraction --------------------------------------------------
+
+    /// Extract likely entity names from text content.
+    /// Finds capitalized phrases (2+ consecutive capitalized words) and
+    /// standalone capitalized words that aren't at the start of sentences.
+    fn extract_entity_names(text: &str) -> Vec<String> {
+        let mut entities = Vec::new();
+        let words: Vec<&str> = text.split_whitespace().collect();
+        let mut i = 0;
+        while i < words.len() {
+            let word = words[i].trim_matches(|c: char| !c.is_alphanumeric());
+            if word.len() >= 2 && word.chars().next().map_or(false, |c| c.is_uppercase())
+               && !word.chars().all(|c| c.is_uppercase()) // skip ALL-CAPS
+            {
+                // Start of a potential entity — collect consecutive capitalized words
+                let start = i;
+                while i < words.len() {
+                    let w = words[i].trim_matches(|c: char| !c.is_alphanumeric());
+                    if w.len() >= 2 && w.chars().next().map_or(false, |c| c.is_uppercase()) {
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if i > start {
+                    let entity: String = words[start..i].iter()
+                        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    // Skip very short or common words
+                    if entity.len() >= 3 && !["The", "This", "That", "These", "Those", "When", "Where", "What", "Which", "Some", "Each", "Every", "After", "Before"].contains(&entity.as_str()) {
+                        entities.push(entity);
+                    }
+                }
+            } else {
+                i += 1;
+            }
+        }
+        entities.dedup();
+        entities
     }
 
     // -- Status -------------------------------------------------------------
@@ -1390,8 +1519,8 @@ mod tests {
         assert_eq!(status.room_count, 1);
         assert_eq!(status.closet_count, 1);
         assert_eq!(status.drawer_count, 1);
-        assert_eq!(status.entity_count, 2);
-        assert_eq!(status.relationship_count, 1);
+        assert_eq!(status.entity_count, 3); // "Data" auto-extracted + A + B from kg_add
+        assert_eq!(status.relationship_count, 2); // REFERENCES from drawer + "knows" from kg_add
         assert!(status.total_pheromone_mass > 0.0);
     }
 
@@ -1536,7 +1665,8 @@ mod tests {
         let s = palace2.status().unwrap();
         assert_eq!(s.wing_count, 2);
         assert_eq!(s.drawer_count, 3);
-        assert_eq!(s.entity_count, 2);
+        // Auto-extracted: "Newton's" and "Van Gogh's Starry Night" + kg_add: "Newton", "Laws of Motion"
+        assert_eq!(s.entity_count, 4);
     }
 
     // ── Similarity graph ─────────────────────────────────────────────────

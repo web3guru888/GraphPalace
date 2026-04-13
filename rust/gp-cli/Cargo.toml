@@ -10,6 +10,12 @@ description = "GraphPalace CLI — manage and navigate memory palaces from the c
 name = "graphpalace"
 path = "src/main.rs"
 
+[features]
+default = ["tfidf"]
+tfidf = ["gp-embeddings/tfidf"]
+onnx = ["gp-embeddings/onnx"]
+download = ["gp-embeddings/download", "onnx"]
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 gp-core = { path = "../gp-core" }
@@ -18,6 +24,8 @@ gp-pathfinding = { path = "../gp-pathfinding" }
 gp-agents = { path = "../gp-agents" }
 gp-embeddings = { path = "../gp-embeddings" }
 gp-mcp = { path = "../gp-mcp" }
+gp-palace = { path = "../gp-palace" }
+gp-storage = { path = "../gp-storage" }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

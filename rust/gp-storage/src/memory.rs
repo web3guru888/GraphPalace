@@ -48,6 +48,12 @@ pub struct PalaceData {
     /// "from:to" → similarity score for SIMILAR_TO edges between drawers.
     #[serde(default)]
     pub similarity_edges: HashMap<String, f32>,
+    /// Hall edges: room→room within the same wing. Key format: "from_room:to_room"
+    #[serde(default)]
+    pub halls: HashMap<String, String>, // key = "from:to", value = wing_id
+    /// Tunnel edges: room→room across different wings. Key format: "from_room:to_room"
+    #[serde(default)]
+    pub tunnels: HashMap<String, ()>, // key = "from:to"
     /// Auto-incrementing id counter.
     pub next_id: u64,
     /// Whether init_schema has been called.
@@ -276,6 +282,13 @@ impl InMemoryBackend {
         source_file: Option<&str>,
         importance: f64,
     ) -> Result<String> {
+        if content.len() > 8192 {
+            return Err(GraphPalaceError::InvalidParameter {
+                param: "content".to_string(),
+                value: format!("{} chars", content.len()),
+                reason: format!("Drawer content exceeds maximum size: {} > 8192 chars", content.len()),
+            });
+        }
         let mut d = self.write_data();
         if !d.closets.contains_key(closet_id) {
             return Err(GraphPalaceError::NodeNotFound {
@@ -654,6 +667,45 @@ impl InMemoryBackend {
                 }
             })
             .collect()
+    }
+
+    // -- Hall & Tunnel edges -------------------------------------------------
+
+    /// Create a hall edge between two rooms in the same wing.
+    pub fn create_hall(&self, from_room_id: &str, to_room_id: &str, wing_id: &str) {
+        let mut d = self.write_data();
+        let key = format!("{from_room_id}:{to_room_id}");
+        d.halls.insert(key.clone(), wing_id.to_string());
+        // Bidirectional
+        let rev_key = format!("{to_room_id}:{from_room_id}");
+        d.halls.insert(rev_key, wing_id.to_string());
+    }
+
+    /// Create a tunnel edge between two rooms in different wings.
+    pub fn create_tunnel(&self, from_room_id: &str, to_room_id: &str) {
+        let mut d = self.write_data();
+        let key = format!("{from_room_id}:{to_room_id}");
+        d.tunnels.insert(key.clone(), ());
+        let rev_key = format!("{to_room_id}:{from_room_id}");
+        d.tunnels.insert(rev_key, ());
+    }
+
+    /// List all hall edges.
+    pub fn list_halls(&self) -> Vec<(String, String, String)> {
+        let d = self.read_data();
+        d.halls.iter().map(|(key, wing_id)| {
+            let parts: Vec<&str> = key.split(':').collect();
+            (parts[0].to_string(), parts[1].to_string(), wing_id.clone())
+        }).collect()
+    }
+
+    /// List all tunnel edges.
+    pub fn list_tunnels(&self) -> Vec<(String, String)> {
+        let d = self.read_data();
+        d.tunnels.keys().map(|key| {
+            let parts: Vec<&str> = key.split(':').collect();
+            (parts[0].to_string(), parts[1].to_string())
+        }).collect()
     }
 
     // -- Taxonomy / stats ----------------------------------------------------
