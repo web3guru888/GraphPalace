@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn serialization_roundtrip() {
-        let b = BeliefState::new(3.14, 2.72);
+        let b = BeliefState::new(3.15, 2.72);
         let json = serde_json::to_string(&b).unwrap();
         let b2: BeliefState = serde_json::from_str(&json).unwrap();
         assert!((b.mean - b2.mean).abs() < f64::EPSILON);

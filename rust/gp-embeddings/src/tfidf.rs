@@ -50,6 +50,17 @@ fn tokenize(text: &str) -> Vec<String> {
 // Random projection
 // ---------------------------------------------------------------------------
 
+/// Stable hash for a term string. Used as the term identifier for random
+/// projection so that the mapping is vocabulary-order-independent.
+fn term_hash(term: &str) -> u64 {
+    let mut h: u64 = 0x517c_c1b7_2722_0a95;
+    for &b in term.as_bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100_0000_01b3);
+    }
+    h
+}
+
 /// Deterministic pseudo-random f32 from two seeds using SplitMix64.
 /// Returns a value in [-1, 1].
 fn seeded_random(dim: u64, term: u64) -> f32 {
@@ -74,8 +85,25 @@ fn seeded_random(dim: u64, term: u64) -> f32 {
 ///
 /// This preserves distances better than dense projection and produces
 /// more discriminative embeddings for small vocabularies.
+#[cfg(test)]
 fn projection_value(output_dim: usize, term_idx: usize) -> f32 {
     let r = seeded_random(output_dim as u64, term_idx as u64);
+    let scale = (3.0f32 / EMBEDDING_DIM as f32).sqrt();
+    if r < -0.333 {
+        -scale
+    } else if r > 0.333 {
+        scale
+    } else {
+        0.0
+    }
+}
+
+/// Stable projection value using a term's string hash instead of its
+/// vocabulary index.  This ensures the projection for a given word is
+/// identical regardless of insertion order, making embeddings
+/// reproducible across palace reload cycles.
+fn projection_value_stable(output_dim: usize, term: &str) -> f32 {
+    let r = seeded_random(output_dim as u64, term_hash(term));
     let scale = (3.0f32 / EMBEDDING_DIM as f32).sqrt();
     if r < -0.333 {
         -scale
@@ -245,14 +273,17 @@ impl TfIdfEmbeddingEngine {
         let mut emb = [0.0f32; EMBEDDING_DIM];
 
         for (term, &term_tf) in &tf {
-            if let Some(&term_idx) = self.vocab.get(*term) {
+            // Only include terms that are in the vocabulary (OOV terms are ignored)
+            if self.vocab.contains_key(*term) {
                 let df = self.doc_freq.get(*term).copied().unwrap_or(1) as f32;
                 let idf = (n / df).ln() + 1.0; // smooth IDF
                 let tfidf = term_tf * idf;
 
-                // Accumulate random projection for this term
+                // Accumulate random projection using stable term hash
+                // (not vocabulary index) so embeddings are reproducible
+                // across palace reload cycles.
                 for (dim, slot) in emb.iter_mut().enumerate() {
-                    *slot += tfidf * projection_value(dim, term_idx);
+                    *slot += tfidf * projection_value_stable(dim, term);
                 }
             }
         }

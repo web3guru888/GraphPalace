@@ -215,7 +215,7 @@ mod tests {
     #[test]
     fn agent_observe_updates_beliefs() {
         let mut agent = make_agent(zero_embedding(), 1.0);
-        assert!(agent.beliefs.get("node1").is_none());
+        assert!(!agent.beliefs.contains_key("node1"));
 
         agent.observe("node1", 50.0, 2.0);
 

@@ -231,7 +231,7 @@ mod tests {
 
     #[test]
     fn mock_engine_default_trait() {
-        let engine = MockEmbeddingEngine::default();
+        let engine = MockEmbeddingEngine;
         assert_eq!(engine.dimension(), EMBEDDING_DIM);
     }
 

@@ -57,9 +57,7 @@ fn varying_pheromone_levels_affect_path_choice() {
     let r2 = astar.find_path(&graph_pheromone, "room_0_0", "room_1_2");
     
     // Both should find paths (via tunnels)
-    if r1.is_some() && r2.is_some() {
-        let p1 = r1.unwrap();
-        let p2 = r2.unwrap();
+    if let (Some(p1), Some(p2)) = (r1, r2) {
         // Pheromone version should have lower total cost (pheromones reduce costs)
         assert!(p2.total_cost <= p1.total_cost + 0.01,
             "Pheromones should reduce cost: clean={}, pheromone={}", p1.total_cost, p2.total_cost);

@@ -134,7 +134,7 @@ fn ten_decay_cycles_after_deposit_costs_near_base() {
     let config = default_config();
     let mut edges = vec![EdgePheromones::default()];
     let mut nodes = vec![NodePheromones::default(); 2];
-    let mut costs = vec![EdgeCost::new(0.5)];
+    let mut costs = [EdgeCost::new(0.5)];
 
     // Deposit
     deposit_path_success(&mut edges, &mut nodes, 0.5);
