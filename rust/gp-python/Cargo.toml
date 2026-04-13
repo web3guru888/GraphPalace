@@ -1,7 +1,9 @@
 [package]
 name = "gp-python"
 version.workspace = true
-edition.workspace = true
+# PyO3 0.22 generates code that triggers `unsafe_op_in_unsafe_fn` warnings
+# in edition 2024; keep this crate on 2021 until PyO3 0.23+ ships.
+edition = "2021"
 license.workspace = true
 repository.workspace = true
 description = "GraphPalace Python bindings via PyO3"
@@ -13,11 +15,9 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.22", features = ["extension-module"] }
 gp-core = { path = "../gp-core" }
-gp-stigmergy = { path = "../gp-stigmergy" }
+gp-palace = { path = "../gp-palace" }
+gp-storage = { path = "../gp-storage" }
+gp-embeddings = { path = "../gp-embeddings", features = ["tfidf"] }
 gp-pathfinding = { path = "../gp-pathfinding" }
-gp-agents = { path = "../gp-agents" }
-gp-embeddings = { path = "../gp-embeddings" }
-gp-mcp = { path = "../gp-mcp" }
 serde.workspace = true
 serde_json.workspace = true
-anyhow.workspace = true

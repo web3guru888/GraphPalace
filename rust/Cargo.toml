@@ -12,6 +12,7 @@ members = [
     "gp-palace",
     "gp-bench",
     "gp-cli",
+    "gp-python",
 ]
 resolver = "2"
 
