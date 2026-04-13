@@ -10,6 +10,7 @@ members = [
     "gp-swarm",
     "gp-storage",
     "gp-palace",
+    "gp-bench",
 ]
 resolver = "2"
 
