@@ -1,0 +1,46 @@
+name: GraphPalace CI
+
+on:
+  push:
+    paths: ['rust/**', 'skills/**', 'graphpalace.toml']
+  pull_request:
+    paths: ['rust/**']
+
+jobs:
+  test:
+    name: Test Rust Crates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+      - name: Run tests
+        working-directory: rust
+        run: cargo test --workspace
+      - name: Clippy
+        working-directory: rust
+        run: cargo clippy --workspace -- -D warnings
+      - name: Format check
+        working-directory: rust
+        run: cargo fmt --all -- --check
+
+  wasm:
+    name: Build WASM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+      - name: Build WASM
+        working-directory: rust/gp-wasm
+        run: wasm-pack build --target web

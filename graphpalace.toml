@@ -1,43 +1,202 @@
 # GraphPalace Configuration
 # See: https://github.com/web3guru888/GraphPalace
+# Spec reference: GRAPHPALACE_SPEC.md Appendix B
+#
+# All values below are defaults. Override per your deployment.
+
+# ─── Palace Defaults ───────────────────────────────────────────────
 
 [palace]
 name = "My Palace"
-embedding_model = "all-MiniLM-L6-v2"
-embedding_dim = 384
+description = ""
+embedding_model = "all-MiniLM-L6-v2"      # Sentence-Transformers model
+embedding_dim = 384                         # Must match model output
+max_drawer_size = 8192                      # Max characters per drawer
+dedup_threshold = 0.85                      # Cosine similarity for duplicate detection
+auto_entity_extraction = true               # Auto-extract entities from new drawers
+auto_similarity_edges = true                # Auto-create SIMILAR_TO edges (>0.8 similarity)
+similarity_threshold = 0.80                 # Minimum similarity for auto-edges
+
+# ─── Pheromone System ──────────────────────────────────────────────
+# Exponential decay: value *= (1.0 - rate) each cycle
+# Half-life ≈ ln(2) / rate cycles
 
 [pheromones]
-exploitation_decay = 0.02
-exploration_decay = 0.05
-success_decay = 0.01
-traversal_decay = 0.03
-recency_decay = 0.10
-decay_interval_cycles = 10
+exploitation_decay = 0.02                   # Node: "valuable location" — half-life ~35 cycles
+exploration_decay = 0.05                    # Node: "already searched" — half-life ~14 cycles
+success_decay = 0.01                        # Edge: "good outcome" — half-life ~69 cycles
+traversal_decay = 0.03                      # Edge: "frequently used" — half-life ~23 cycles
+recency_decay = 0.10                        # Edge: "used recently" — half-life ~7 cycles
+decay_interval_cycles = 10                  # Run bulk decay every N cycles
+min_pheromone = 0.001                       # Floor (below this, treat as zero)
+
+[pheromones.deposit]
+success_base_reward = 1.0                   # Base reward for successful search
+exploitation_bonus = 0.2                    # Node bonus after successful path
+exploration_mark = 0.3                      # Exploration deposit after visiting
+traversal_increment = 0.1                   # Traversal deposit per edge traversed
+recency_reset = 1.0                         # Recency resets to max on use
+
+# ─── Cost Weights (Semantic A*) ───────────────────────────────────
+# cost(edge) = α × C_semantic + β × C_pheromone + γ × C_structural
+# Must sum to 1.0
 
 [cost_weights]
-semantic = 0.4
-pheromone = 0.3
+semantic = 0.4                              # Semantic similarity to goal
+pheromone = 0.3                             # Pheromone guidance (collective intelligence)
+structural = 0.3                            # Relation type weight (from weight table)
+
+# Context-adaptive weight presets
+[cost_weights.hypothesis_testing]
+semantic = 0.3
+pheromone = 0.4
 structural = 0.3
 
+[cost_weights.exploratory_research]
+semantic = 0.5
+pheromone = 0.2
+structural = 0.3
+
+[cost_weights.evidence_gathering]
+semantic = 0.35
+pheromone = 0.35
+structural = 0.3
+
+[cost_weights.memory_recall]
+semantic = 0.5
+pheromone = 0.3
+structural = 0.2
+
+# ─── A* Pathfinding ───────────────────────────────────────────────
+
 [astar]
-max_iterations = 10000
-cross_domain_threshold = 0.3
+max_iterations = 10000                      # Safety limit for pathfinding
+cross_domain_threshold = 0.3                # Similarity below this = cross-domain
+beam_width = 0                              # 0 = unlimited (full A*); >0 = beam search
+cache_ttl_seconds = 600                     # Path cache lifetime
+
+# ─── Pheromone Cost Recomputation ─────────────────────────────────
+# pheromone_factor = success_w * success + recency_w * recency + traversal_w * traversal
+# current_cost = base_cost * (1.0 - pheromone_factor * attenuation)
+
+[pheromone_cost]
+success_weight = 0.5                        # Quality signal (50%)
+recency_weight = 0.3                        # Freshness signal (30%)
+traversal_weight = 0.2                      # Popularity signal (20%)
+attenuation = 0.5                           # Max cost reduction from pheromones
+cost_clamp_min = 0.0
+cost_clamp_max = 10.0
+
+# ─── Active Inference Agents ──────────────────────────────────────
 
 [agents]
-default_temperature = 0.5
-annealing_schedule = "cosine"
-belief_prior_mean = 20.0
-belief_prior_precision = 0.1
+default_temperature = 0.5                   # Softmax temperature [0.1, 1.0]
+annealing_schedule = "cosine"               # "linear", "exponential", "cosine"
+belief_prior_mean = 20.0                    # Default belief mean (high = uncertain)
+belief_prior_precision = 0.1                # Default belief precision (low = uncertain)
+
+[agents.annealing]
+linear_start = 1.0
+linear_end = 0.1
+exponential_start = 1.0
+exponential_decay = 3.0
+cosine_start = 1.0
+cosine_end = 0.1
+
+# ─── Swarm Coordination ──────────────────────────────────────────
 
 [swarm]
-num_agents = 5
-max_cycles = 1000
-convergence_window = 20
-growth_threshold = 5.0
-variance_threshold = 0.05
-frontier_threshold = 10
+num_agents = 5                              # Number of agents in the swarm
+max_cycles = 1000                           # Max exploration cycles
+convergence_window = 20                     # Cycles to look back for convergence
+growth_threshold = 5.0                      # Nodes/cycle below this = converging
+variance_threshold = 0.05                   # Pheromone variance below this = converging
+frontier_threshold = 10                     # Frontier nodes below this = converging
+frontier_sample_size = 100                  # Nodes to sample for frontier analysis
+
+# ─── Embedding Engine ─────────────────────────────────────────────
+
+[embeddings]
+model_path = ""                             # Empty = use bundled model
+batch_size = 32                             # Texts per batch
+max_sequence_length = 256                   # Token limit per text
+normalize = true                            # L2-normalize output vectors
+quantize = false                            # Use int8 quantization (WASM optimization)
+
+# ─── Vector Index (HNSW) ─────────────────────────────────────────
+
+[vector_index]
+metric = "cosine"                           # "cosine", "l2", "ip"
+M = 16                                      # HNSW max connections per layer
+ef_construction = 200                       # HNSW build-time search width
+ef_search = 50                              # HNSW query-time search width
+
+# ─── Cache ─────────────────────────────────────────────────────────
 
 [cache]
-embedding_ttl_seconds = 3600
-search_ttl_seconds = 300
-max_cache_entries = 10000
+embedding_ttl_seconds = 3600                # Embedding cache lifetime
+search_ttl_seconds = 300                    # Search result cache lifetime
+max_cache_entries = 10000                   # LRU eviction threshold
+
+# ─── Storage ──────────────────────────────────────────────────────
+
+[storage]
+backend = "filesystem"                      # "filesystem", "memory", "indexeddb", "opfs"
+database_path = "./graphpalace_db"          # Path for filesystem backend
+wal_mode = true                             # Write-ahead logging for crash safety
+checkpoint_interval_seconds = 300           # Auto-checkpoint interval
+
+# ─── MCP Server ──────────────────────────────────────────────────
+
+[mcp]
+transport = "stdio"                         # "stdio" or "http"
+host = "127.0.0.1"                          # HTTP transport bind address
+port = 3100                                 # HTTP transport port
+max_results_per_query = 50                  # Safety limit on result sets
+enable_write_tools = true                   # Set false for read-only access
+
+# ─── Logging ──────────────────────────────────────────────────────
+
+[logging]
+level = "info"                              # "trace", "debug", "info", "warn", "error"
+format = "json"                             # "json" or "pretty"
+file = ""                                   # Empty = stderr only
+
+# ─── Relation Type Weights (Appendix A) ──────────────────────────
+# Structural cost for A* pathfinding by relation type.
+# Lower = cheaper to traverse.
+
+[relation_weights]
+CONTAINS = 0.2
+HAS_ROOM = 0.3
+HAS_CLOSET = 0.3
+HAS_DRAWER = 0.3
+HALL = 0.5
+TUNNEL = 0.7
+REFERENCES = 0.5
+SIMILAR_TO = 0.4                            # Actual cost = 1.0 - similarity
+instance_of = 0.3
+subclass_of = 0.3
+part_of = 0.5
+has_part = 0.5
+causes = 0.6
+inhibits = 0.6
+correlates_with = 0.7
+located_in = 0.7
+created_by = 0.8
+used_for = 0.8
+occurred_at = 1.0
+identified_by = 1.5
+DEFAULT = 1.0
+
+# ─── Performance Targets (reference) ─────────────────────────────
+# These are not configuration — just documented targets.
+#
+# Semantic search (top-10):       <50ms
+# A* pathfinding (cached):        <200ms
+# A* pathfinding (uncached):      <500ms
+# Embedding generation:           <100ms per text
+# Pheromone decay (10k edges):    <500ms
+# WASM bundle size:               <20MB
+# Memory (1M drawers):            <2GB
+# Palace wake-up (L0+L1):        <200 tokens

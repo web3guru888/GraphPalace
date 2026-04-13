@@ -1,0 +1,23 @@
+[package]
+name = "gp-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "GraphPalace CLI — manage and navigate memory palaces from the command line"
+
+[[bin]]
+name = "graphpalace"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+gp-core = { path = "../gp-core" }
+gp-stigmergy = { path = "../gp-stigmergy" }
+gp-pathfinding = { path = "../gp-pathfinding" }
+gp-agents = { path = "../gp-agents" }
+gp-embeddings = { path = "../gp-embeddings" }
+gp-mcp = { path = "../gp-mcp" }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
