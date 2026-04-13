@@ -653,6 +653,70 @@ impl GraphPalace {
             .collect())
     }
 
+    /// Invalidate a knowledge graph relationship.
+    pub fn kg_invalidate(&self, subject: &str, predicate: &str, object: &str) -> Result<bool> {
+        // Resolve entity names to IDs
+        let subj_id = self.storage.find_entity_by_name(subject)
+            .map(|e| e.id)
+            .unwrap_or_else(|| subject.to_string());
+        let obj_id = self.storage.find_entity_by_name(object)
+            .map(|e| e.id)
+            .unwrap_or_else(|| object.to_string());
+        Ok(self.storage.invalidate_relationship(&subj_id, predicate, &obj_id))
+    }
+
+    /// Find contradicting relationships for an entity.
+    pub fn kg_contradictions(&self, entity: &str) -> Result<Vec<(KgRelationship, KgRelationship)>> {
+        let entity_id = self.storage.find_entity_by_name(entity)
+            .map(|e| e.id)
+            .unwrap_or_else(|| entity.to_string());
+        let raw = self.storage.find_contradictions(&entity_id);
+        let d = self.storage.read_data();
+        Ok(raw.into_iter().map(|(a, b)| {
+            let resolve = |id: &str| -> String {
+                d.entities.get(id).map(|e| e.name.clone()).unwrap_or_else(|| id.to_string())
+            };
+            (
+                KgRelationship { subject: resolve(&a.subject), predicate: a.predicate, object: resolve(&a.object), confidence: a.confidence },
+                KgRelationship { subject: resolve(&b.subject), predicate: b.predicate, object: resolve(&b.object), confidence: b.confidence },
+            )
+        }).collect())
+    }
+
+    /// List all agents in the palace.
+    pub fn list_palace_agents(&self) -> Vec<gp_core::types::Agent> {
+        self.storage.list_agents()
+    }
+
+    /// Write an entry to an agent's diary.
+    pub fn diary_write(&self, agent_id: &str, entry: &str) -> Result<()> {
+        self.storage.append_diary(agent_id, entry)
+    }
+
+    /// Read an agent's diary entries.
+    pub fn diary_read(&self, agent_id: &str, last_n: Option<usize>) -> Result<Vec<String>> {
+        let agent = self.storage.get_agent(agent_id)?;
+        let entries: Vec<String> = agent.diary.lines().map(|l| l.to_string()).collect();
+        match last_n {
+            Some(n) => Ok(entries.into_iter().rev().take(n).collect::<Vec<_>>().into_iter().rev().collect()),
+            None => Ok(entries),
+        }
+    }
+
+    /// Create a new agent in the palace.
+    pub fn create_agent(&mut self, name: &str, domain: &str, archetype: &str) -> Result<String> {
+        let goal_emb = self.embeddings.encode(domain)
+            .map_err(|e| GraphPalaceError::Embedding(e.to_string()))?;
+        let temperature = match archetype.to_lowercase().as_str() {
+            "explorer" => 1.0,
+            "exploiter" => 0.1,
+            "specialist" => 0.3,
+            "generalist" => 0.7,
+            _ => 0.5, // balanced
+        };
+        self.storage.create_agent(name, domain, archetype, goal_emb, temperature)
+    }
+
     /// Find an entity by name, or create one.
     fn find_or_create_entity(&mut self, name: &str) -> Result<String> {
         if let Some(e) = self.storage.find_entity_by_name(name) {

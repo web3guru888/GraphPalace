@@ -169,6 +169,10 @@ enum Commands {
         /// Bind address
         #[arg(short, long, default_value = "127.0.0.1")]
         bind: String,
+
+        /// Bearer token for authentication (optional, set to require auth)
+        #[arg(long, env = "GRAPHPALACE_TOKEN")]
+        token: Option<String>,
     },
 }
 
@@ -327,43 +331,76 @@ fn config_path(db_path: &str) -> String {
     format!("{db_path}/config.json")
 }
 
-/// Load config from the palace directory, or from the specified toml file, or default.
+/// Load config from a TOML file, applying values on top of defaults.
 fn load_config(config_file: &str) -> GraphPalaceConfig {
-    // Try palace-local config.json first
-    // (this is set by save_config and preserves the palace name)
-    // Caller passes the toml config path, but we also check for config.json in the db dir.
+    if !Path::new(config_file).exists() {
+        return GraphPalaceConfig::default();
+    }
+    let Ok(toml_str) = std::fs::read_to_string(config_file) else {
+        return GraphPalaceConfig::default();
+    };
+    let Ok(table) = toml_str.parse::<toml::Table>() else {
+        return GraphPalaceConfig::default();
+    };
 
-    // Try to parse the graphpalace.toml file
-    if Path::new(config_file).exists() {
-        if let Ok(toml_str) = std::fs::read_to_string(config_file) {
-            // Parse the TOML manually for the fields we care about
-            let mut config = GraphPalaceConfig::default();
-            for line in toml_str.lines() {
-                let line = line.trim();
-                if let Some(rest) = line.strip_prefix("name = ") {
-                    let val = rest.trim().trim_matches('"');
-                    config.palace.name = val.to_string();
-                } else if let Some(rest) = line.strip_prefix("exploitation_decay = ") {
-                    if let Ok(v) = rest.trim().parse() { config.pheromones.exploitation_decay = v; }
-                } else if let Some(rest) = line.strip_prefix("exploration_decay = ") {
-                    if let Ok(v) = rest.trim().parse() { config.pheromones.exploration_decay = v; }
-                } else if let Some(rest) = line.strip_prefix("success_decay = ") {
-                    if let Ok(v) = rest.trim().parse() { config.pheromones.success_decay = v; }
-                } else if let Some(rest) = line.strip_prefix("semantic = ") {
-                    if let Ok(v) = rest.trim().parse() { config.cost_weights.semantic = v; }
-                } else if let Some(rest) = line.strip_prefix("pheromone = ") {
-                    if let Ok(v) = rest.trim().parse() { config.cost_weights.pheromone = v; }
-                } else if let Some(rest) = line.strip_prefix("structural = ") {
-                    if let Ok(v) = rest.trim().parse() { config.cost_weights.structural = v; }
-                } else if let Some(rest) = line.strip_prefix("max_iterations = ") {
-                    if let Ok(v) = rest.trim().parse() { config.astar.max_iterations = v; }
-                }
-            }
-            return config;
-        }
+    let mut config = GraphPalaceConfig::default();
+
+    // [palace]
+    if let Some(palace) = table.get("palace").and_then(|v| v.as_table()) {
+        if let Some(v) = palace.get("name").and_then(|v| v.as_str()) { config.palace.name = v.to_string(); }
+        if let Some(v) = palace.get("embedding_model").and_then(|v| v.as_str()) { config.palace.embedding_model = v.to_string(); }
+        if let Some(v) = palace.get("embedding_dim").and_then(|v| v.as_integer()) { config.palace.embedding_dim = v as usize; }
     }
 
-    GraphPalaceConfig::default()
+    // [pheromones]
+    if let Some(ph) = table.get("pheromones").and_then(|v| v.as_table()) {
+        if let Some(v) = ph.get("exploitation_decay").and_then(|v| v.as_float()) { config.pheromones.exploitation_decay = v; }
+        if let Some(v) = ph.get("exploration_decay").and_then(|v| v.as_float()) { config.pheromones.exploration_decay = v; }
+        if let Some(v) = ph.get("success_decay").and_then(|v| v.as_float()) { config.pheromones.success_decay = v; }
+        if let Some(v) = ph.get("traversal_decay").and_then(|v| v.as_float()) { config.pheromones.traversal_decay = v; }
+        if let Some(v) = ph.get("recency_decay").and_then(|v| v.as_float()) { config.pheromones.recency_decay = v; }
+        if let Some(v) = ph.get("decay_interval_cycles").and_then(|v| v.as_integer()) { config.pheromones.decay_interval_cycles = v as usize; }
+    }
+
+    // [cost_weights]
+    if let Some(cw) = table.get("cost_weights").and_then(|v| v.as_table()) {
+        if let Some(v) = cw.get("semantic").and_then(|v| v.as_float()) { config.cost_weights.semantic = v; }
+        if let Some(v) = cw.get("pheromone").and_then(|v| v.as_float()) { config.cost_weights.pheromone = v; }
+        if let Some(v) = cw.get("structural").and_then(|v| v.as_float()) { config.cost_weights.structural = v; }
+    }
+
+    // [astar]
+    if let Some(astar) = table.get("astar").and_then(|v| v.as_table()) {
+        if let Some(v) = astar.get("max_iterations").and_then(|v| v.as_integer()) { config.astar.max_iterations = v as usize; }
+        if let Some(v) = astar.get("cross_domain_threshold").and_then(|v| v.as_float()) { config.astar.cross_domain_threshold = v; }
+    }
+
+    // [agents]
+    if let Some(ag) = table.get("agents").and_then(|v| v.as_table()) {
+        if let Some(v) = ag.get("default_temperature").and_then(|v| v.as_float()) { config.agents.default_temperature = v; }
+        if let Some(v) = ag.get("annealing_schedule").and_then(|v| v.as_str()) { config.agents.annealing_schedule = v.to_string(); }
+        if let Some(v) = ag.get("belief_prior_mean").and_then(|v| v.as_float()) { config.agents.belief_prior_mean = v; }
+        if let Some(v) = ag.get("belief_prior_precision").and_then(|v| v.as_float()) { config.agents.belief_prior_precision = v; }
+    }
+
+    // [swarm]
+    if let Some(sw) = table.get("swarm").and_then(|v| v.as_table()) {
+        if let Some(v) = sw.get("num_agents").and_then(|v| v.as_integer()) { config.swarm.num_agents = v as usize; }
+        if let Some(v) = sw.get("max_cycles").and_then(|v| v.as_integer()) { config.swarm.max_cycles = v as usize; }
+        if let Some(v) = sw.get("convergence_window").and_then(|v| v.as_integer()) { config.swarm.convergence_window = v as usize; }
+        if let Some(v) = sw.get("growth_threshold").and_then(|v| v.as_float()) { config.swarm.growth_threshold = v; }
+        if let Some(v) = sw.get("variance_threshold").and_then(|v| v.as_float()) { config.swarm.variance_threshold = v; }
+        if let Some(v) = sw.get("frontier_threshold").and_then(|v| v.as_integer()) { config.swarm.frontier_threshold = v as usize; }
+    }
+
+    // [cache]
+    if let Some(ca) = table.get("cache").and_then(|v| v.as_table()) {
+        if let Some(v) = ca.get("embedding_ttl_seconds").and_then(|v| v.as_integer()) { config.cache.embedding_ttl_seconds = v as u64; }
+        if let Some(v) = ca.get("search_ttl_seconds").and_then(|v| v.as_integer()) { config.cache.search_ttl_seconds = v as u64; }
+        if let Some(v) = ca.get("max_cache_entries").and_then(|v| v.as_integer()) { config.cache.max_cache_entries = v as usize; }
+    }
+
+    config
 }
 
 /// Load config from the palace's saved config.json, falling back to defaults.
@@ -379,15 +416,7 @@ fn load_palace_config(db_path: &str, config_file: &str) -> GraphPalaceConfig {
     load_config(config_file)
 }
 
-/// Save the palace config to the palace directory.
-fn save_config(palace: &GraphPalace, db_path: &str) -> Result<()> {
-    let config = palace.config();
-    let json = serde_json::to_string_pretty(config)
-        .with_context(|| "serializing config")?;
-    std::fs::write(config_path(db_path), json)
-        .with_context(|| "writing config")?;
-    Ok(())
-}
+
 
 fn load_or_create_palace(db_path: &str, config_file: &str) -> Result<GraphPalace> {
     let config = load_palace_config(db_path, config_file);
@@ -415,9 +444,25 @@ fn load_or_create_palace(db_path: &str, config_file: &str) -> Result<GraphPalace
         let export = PalaceExport::from_json(&json)
             .with_context(|| "parsing palace export JSON")?;
         palace.import(export, ImportMode::Replace)?;
+
+        // Auto-build tunnels between rooms in different wings for cross-wing navigation
+        let tunnel_count = palace.build_tunnels(0.3).unwrap_or(0);
+        if tunnel_count > 0 {
+            eprintln!("Built {tunnel_count} tunnel(s) for cross-wing navigation");
+        }
     }
 
     Ok(palace)
+}
+
+/// Atomically write data to a file (write to .tmp, then rename).
+fn atomic_write(path: &str, data: &str) -> Result<()> {
+    let tmp = format!("{path}.tmp");
+    std::fs::write(&tmp, data)
+        .with_context(|| format!("writing {tmp}"))?;
+    std::fs::rename(&tmp, path)
+        .with_context(|| format!("renaming {tmp} → {path}"))?;
+    Ok(())
 }
 
 fn save_palace(palace: &GraphPalace, db_path: &str) -> Result<()> {
@@ -426,8 +471,11 @@ fn save_palace(palace: &GraphPalace, db_path: &str) -> Result<()> {
     let export = palace.export()?;
     let json = export.to_json_pretty()
         .with_context(|| "serializing palace export")?;
-    std::fs::write(state_path(db_path), json)
-        .with_context(|| "writing palace state")?;
+    atomic_write(&state_path(db_path), &json)?;
+    // Also save config atomically
+    let config_json = serde_json::to_string_pretty(palace.config())
+        .with_context(|| "serializing config")?;
+    atomic_write(&config_path(db_path), &config_json)?;
     Ok(())
 }
 
@@ -740,9 +788,49 @@ impl ToolHandler for PalaceToolHandler {
                     None => ToolCallResult::error("Missing required parameter: entity"),
                 }
             }
-            "kg_invalidate" | "kg_contradictions" => {
-                // Not yet implemented in palace backend
-                return None; // fall through to placeholder
+            "kg_invalidate" => {
+                let subject = arguments.and_then(|a| a.get("subject")).and_then(|v| v.as_str());
+                let predicate = arguments.and_then(|a| a.get("predicate")).and_then(|v| v.as_str());
+                let object = arguments.and_then(|a| a.get("object")).and_then(|v| v.as_str());
+                match (subject, predicate, object) {
+                    (Some(s), Some(p), Some(o)) => {
+                        match self.palace.kg_invalidate(s, p, o) {
+                            Ok(found) => {
+                                if found { self.auto_save(); }
+                                ToolCallResult::text(serde_json::json!({
+                                    "invalidated": found,
+                                    "subject": s,
+                                    "predicate": p,
+                                    "object": o,
+                                }).to_string())
+                            }
+                            Err(e) => ToolCallResult::error(e.to_string()),
+                        }
+                    }
+                    _ => ToolCallResult::error("Missing required parameters: subject, predicate, object"),
+                }
+            }
+            "kg_contradictions" => {
+                let entity = arguments.and_then(|a| a.get("entity")).and_then(|v| v.as_str());
+                match entity {
+                    Some(e) => {
+                        match self.palace.kg_contradictions(e) {
+                            Ok(pairs) => {
+                                let contradiction_json: Vec<Value> = pairs.iter().map(|(a, b)| serde_json::json!({
+                                    "relationship_a": { "subject": a.subject, "predicate": a.predicate, "object": a.object },
+                                    "relationship_b": { "subject": b.subject, "predicate": b.predicate, "object": b.object },
+                                })).collect();
+                                ToolCallResult::text(serde_json::json!({
+                                    "entity": e,
+                                    "contradictions": contradiction_json,
+                                    "count": pairs.len(),
+                                }).to_string())
+                            }
+                            Err(err) => ToolCallResult::error(err.to_string()),
+                        }
+                    }
+                    None => ToolCallResult::error("Missing required parameter: entity"),
+                }
             }
             "kg_timeline" => {
                 let entity = arguments.and_then(|a| a.get("entity")).and_then(|v| v.as_str());
@@ -890,9 +978,59 @@ impl ToolHandler for PalaceToolHandler {
                     Err(e) => ToolCallResult::error(e.to_string()),
                 }
             }
-            // Agent diary — not yet wired to backend
-            "list_agents" | "diary_write" | "diary_read" => return None,
-            _ => return None, // fall through to placeholder
+            "list_agents" => {
+                let agents = self.palace.list_palace_agents();
+                let agent_json: Vec<Value> = agents.iter().map(|a| serde_json::json!({
+                    "id": a.id,
+                    "name": a.name,
+                    "domain": a.domain,
+                    "focus": a.focus,
+                    "temperature": a.temperature,
+                })).collect();
+                ToolCallResult::text(serde_json::json!({
+                    "agents": agent_json,
+                    "count": agents.len(),
+                }).to_string())
+            }
+            "diary_write" => {
+                let agent_id = arguments.and_then(|a| a.get("agent_id")).and_then(|v| v.as_str());
+                let entry = arguments.and_then(|a| a.get("entry")).and_then(|v| v.as_str());
+                match (agent_id, entry) {
+                    (Some(id), Some(text)) => {
+                        match self.palace.diary_write(id, text) {
+                            Ok(()) => {
+                                self.auto_save();
+                                ToolCallResult::text(serde_json::json!({
+                                    "written": true,
+                                    "agent_id": id,
+                                }).to_string())
+                            }
+                            Err(e) => ToolCallResult::error(e.to_string()),
+                        }
+                    }
+                    _ => ToolCallResult::error("Missing required parameters: agent_id, entry"),
+                }
+            }
+            "diary_read" => {
+                let agent_id = arguments.and_then(|a| a.get("agent_id")).and_then(|v| v.as_str());
+                let last_n = arguments.and_then(|a| a.get("last_n")).and_then(|v| v.as_u64()).map(|v| v as usize);
+                match agent_id {
+                    Some(id) => {
+                        match self.palace.diary_read(id, last_n) {
+                            Ok(entries) => {
+                                ToolCallResult::text(serde_json::json!({
+                                    "agent_id": id,
+                                    "entries": entries,
+                                    "count": entries.len(),
+                                }).to_string())
+                            }
+                            Err(e) => ToolCallResult::error(e.to_string()),
+                        }
+                    }
+                    None => ToolCallResult::error("Missing required parameter: agent_id"),
+                }
+            }
+            _ => return None, // unknown tool — fall through to MCP error handling
         };
         Some(result)
     }
@@ -922,8 +1060,6 @@ fn main() -> Result<()> {
             let embeddings: Box<dyn EmbeddingEngine> = auto_engine(Some(&mdir));
             let palace = GraphPalace::new(config, storage, embeddings)?;
             save_palace(&palace, &cli.db)?;
-            // Save config alongside palace state
-            save_config(&palace, &cli.db)?;
             println!("Initialized palace '{name}' at {}", cli.db);
             if let Some(desc) = description {
                 println!("  Description: {desc}");
@@ -1116,7 +1252,18 @@ fn main() -> Result<()> {
                 }
             }
             KgCommands::Contradictions { entity } => {
-                println!("No contradictions found for '{entity}'");
+                let palace = load_or_create_palace(&cli.db, &cli.config)?;
+                let pairs = palace.kg_contradictions(&entity)?;
+                if pairs.is_empty() {
+                    println!("No contradictions found for '{entity}'");
+                } else {
+                    println!("Contradictions for '{entity}' ({} found):\n", pairs.len());
+                    for (a, b) in &pairs {
+                        println!("  A: {} --{}--> {}", a.subject, a.predicate, a.object);
+                        println!("  B: {} --{}--> {}", b.subject, b.predicate, b.object);
+                        println!();
+                    }
+                }
             }
         },
         Commands::Pheromone { command } => match command {
@@ -1170,27 +1317,82 @@ fn main() -> Result<()> {
         },
         Commands::Agent { command } => match command {
             AgentCommands::List => {
-                println!("No agents configured. Agent system not yet wired.");
+                let palace = load_or_create_palace(&cli.db, &cli.config)?;
+                let agents = palace.list_palace_agents();
+                if agents.is_empty() {
+                    println!("No agents. Create one with 'graphpalace agent create <name> <domain>'");
+                } else {
+                    println!("{:<20} {:<15} {:<15} {:<8}", "NAME", "DOMAIN", "FOCUS", "TEMP");
+                    println!("{}", "-".repeat(60));
+                    for a in &agents {
+                        println!("{:<20} {:<15} {:<15} {:<8.2}", a.name, a.domain, a.focus, a.temperature);
+                    }
+                }
             }
-            AgentCommands::Diary { agent_id, last_n: _ } => {
-                println!("No diary entries for agent '{agent_id}'");
+            AgentCommands::Diary { agent_id, last_n } => {
+                let palace = load_or_create_palace(&cli.db, &cli.config)?;
+                match palace.diary_read(&agent_id, Some(last_n)) {
+                    Ok(entries) => {
+                        if entries.is_empty() {
+                            println!("No diary entries for agent '{agent_id}'");
+                        } else {
+                            println!("Diary for '{agent_id}' (last {last_n}):");
+                            for entry in &entries {
+                                println!("  {entry}");
+                            }
+                        }
+                    }
+                    Err(e) => println!("Error: {e}"),
+                }
             }
         },
-        Commands::Serve { port: _, bind: _ } => {
+        Commands::Serve { port: _, bind: _, token } => {
             let palace = load_or_create_palace(&cli.db, &cli.config)?;
             let handler = PalaceToolHandler { palace, db_path: cli.db.clone() };
             let mut server = McpServer::with_handler(Box::new(handler));
 
-            // Run stdio JSON-RPC loop
-            eprintln!("GraphPalace MCP server ready (stdio mode)");
+            if token.is_some() {
+                eprintln!("GraphPalace MCP server ready (stdio mode, auth enabled)");
+            } else {
+                eprintln!("GraphPalace MCP server ready (stdio mode)");
+            }
+
             let stdin = io::stdin();
             let mut stdout = io::stdout();
+            let mut authenticated = token.is_none(); // no token = always authed
 
             for line in stdin.lock().lines() {
                 let line = line?;
                 if line.trim().is_empty() {
                     continue;
                 }
+
+                // Simple bearer token auth: first non-empty line can be "AUTH <token>"
+                if !authenticated {
+                    if let Some(ref expected) = token {
+                        // Check for auth in the JSON-RPC params
+                        if let Ok(req) = serde_json::from_str::<Value>(&line) {
+                            let provided = req.get("params")
+                                .and_then(|p| p.get("_auth"))
+                                .and_then(|v| v.as_str());
+                            if provided == Some(expected.as_str()) {
+                                authenticated = true;
+                            } else if req.get("method").and_then(|m| m.as_str()) == Some("initialize") {
+                                // Allow initialize without auth, but mark as needing auth
+                                let response = server.handle_json(&line);
+                                writeln!(stdout, "{response}")?;
+                                stdout.flush()?;
+                                continue;
+                            } else {
+                                let err = r#"{"jsonrpc":"2.0","error":{"code":-32600,"message":"Authentication required. Set _auth in params."}}"#;
+                                writeln!(stdout, "{err}")?;
+                                stdout.flush()?;
+                                continue;
+                            }
+                        }
+                    }
+                }
+
                 let response = server.handle_json(&line);
                 writeln!(stdout, "{response}")?;
                 stdout.flush()?;

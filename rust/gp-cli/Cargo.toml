@@ -17,7 +17,7 @@ onnx = ["gp-embeddings/onnx"]
 download = ["gp-embeddings/download", "onnx"]
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 gp-core = { path = "../gp-core" }
 gp-stigmergy = { path = "../gp-stigmergy" }
 gp-pathfinding = { path = "../gp-pathfinding" }
@@ -26,6 +26,9 @@ gp-embeddings = { path = "../gp-embeddings" }
 gp-mcp = { path = "../gp-mcp" }
 gp-palace = { path = "../gp-palace" }
 gp-storage = { path = "../gp-storage" }
+gp-swarm = { path = "../gp-swarm" }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
+toml = "0.8"
+rand = { workspace = true }
