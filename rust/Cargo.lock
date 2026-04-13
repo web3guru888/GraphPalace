@@ -182,6 +182,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "gp-storage"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "gp-core",
+ "gp-embeddings",
+ "gp-stigmergy",
+ "libc",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
 name = "gp-swarm"
 version = "0.1.0"
 dependencies = [
