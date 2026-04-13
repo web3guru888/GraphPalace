@@ -1,5 +1,7 @@
 //! Embedding engine trait and mock implementation.
 
+use std::path::Path;
+
 use gp_core::{Embedding, GraphPalaceError, Result, EMBEDDING_DIM};
 
 /// Trait for producing fixed-dimension embeddings from text.
@@ -83,6 +85,40 @@ impl EmbeddingEngine for MockEmbeddingEngine {
     }
 }
 
+/// Create the best available embedding engine.
+///
+/// If the `onnx` feature is enabled **and** the specified `model_dir`
+/// contains `model.onnx` + `tokenizer.json`, returns an
+/// [`OnnxEmbeddingEngine`](crate::onnx::OnnxEmbeddingEngine).
+/// Otherwise falls back to [`MockEmbeddingEngine`].
+///
+/// Pass `None` to always get a mock engine (useful for tests).
+///
+/// # Examples
+///
+/// ```rust
+/// use gp_embeddings::engine::auto_engine;
+///
+/// let mut engine = auto_engine(None);
+/// let emb = engine.encode("test").unwrap();
+/// assert_eq!(emb.len(), 384);
+/// ```
+pub fn auto_engine(model_dir: Option<&Path>) -> Box<dyn EmbeddingEngine> {
+    #[cfg(feature = "onnx")]
+    if let Some(dir) = model_dir
+        && dir.join("model.onnx").exists()
+        && dir.join("tokenizer.json").exists()
+        && let Ok(engine) = crate::onnx::OnnxEmbeddingEngine::from_pretrained(dir)
+    {
+        return Box::new(engine);
+    }
+
+    // Suppress unused-variable warning when `onnx` feature is disabled.
+    let _ = model_dir;
+
+    Box::new(MockEmbeddingEngine::new())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,5 +179,84 @@ mod tests {
         let mut engine = MockEmbeddingEngine::new();
         let result = engine.batch_encode(&["ok", ""]);
         assert!(result.is_err());
+    }
+
+    // -------------------------------------------------------------------
+    // auto_engine tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn auto_engine_none_returns_mock() {
+        let mut engine = auto_engine(None);
+        let emb = engine.encode("auto_engine test").unwrap();
+        assert_eq!(emb.len(), EMBEDDING_DIM);
+    }
+
+    #[test]
+    fn auto_engine_nonexistent_dir_returns_mock() {
+        let mut engine = auto_engine(Some(Path::new("/nonexistent/model/dir")));
+        let emb = engine.encode("fallback test").unwrap();
+        assert_eq!(emb.len(), EMBEDDING_DIM);
+    }
+
+    #[test]
+    fn auto_engine_empty_dir_returns_mock() {
+        let dir = std::env::temp_dir().join("gp_auto_engine_empty");
+        let _ = std::fs::create_dir_all(&dir);
+        let mut engine = auto_engine(Some(&dir));
+        let emb = engine.encode("empty dir").unwrap();
+        assert_eq!(emb.len(), EMBEDDING_DIM);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn auto_engine_dimension_is_384() {
+        let engine = auto_engine(None);
+        assert_eq!(engine.dimension(), 384);
+    }
+
+    #[test]
+    fn auto_engine_batch_encode_works() {
+        let mut engine = auto_engine(None);
+        let results = engine.batch_encode(&["alpha", "beta"]).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_ne!(results[0], results[1]);
+    }
+
+    #[test]
+    fn mock_engine_default_trait() {
+        let engine = MockEmbeddingEngine::default();
+        assert_eq!(engine.dimension(), EMBEDDING_DIM);
+    }
+
+    #[test]
+    fn mock_engine_unicode_text() {
+        let mut engine = MockEmbeddingEngine::new();
+        let emb = engine.encode("こんにちは世界 🌍").unwrap();
+        let norm: f64 = emb.iter().map(|x| (*x as f64) * (*x as f64)).sum::<f64>().sqrt();
+        assert!((norm - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn mock_engine_long_text() {
+        let mut engine = MockEmbeddingEngine::new();
+        let long = "a".repeat(100_000);
+        let emb = engine.encode(&long).unwrap();
+        assert_eq!(emb.len(), EMBEDDING_DIM);
+    }
+
+    #[test]
+    fn mock_engine_single_char() {
+        let mut engine = MockEmbeddingEngine::new();
+        let emb = engine.encode("x").unwrap();
+        assert_eq!(emb.len(), EMBEDDING_DIM);
+        let norm: f64 = emb.iter().map(|x| (*x as f64) * (*x as f64)).sum::<f64>().sqrt();
+        assert!((norm - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn auto_engine_encode_rejects_empty() {
+        let mut engine = auto_engine(None);
+        assert!(engine.encode("").is_err());
     }
 }

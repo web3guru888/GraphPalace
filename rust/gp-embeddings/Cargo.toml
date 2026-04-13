@@ -5,11 +5,22 @@ edition.workspace = true
 license.workspace = true
 description = "Embedding vectors and similarity: cosine distance, vector quantisation, embedding store"
 
+[features]
+default = []
+onnx = ["dep:ort", "dep:tokenizers", "dep:ndarray"]
+download = ["dep:ureq", "onnx"]
+
 [dependencies]
 gp-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 rand = { workspace = true }
+
+# Optional ONNX inference dependencies
+ort = { version = "2.0.0-rc.12", optional = true }
+tokenizers = { version = "0.22", optional = true, default-features = false, features = ["onig"] }
+ndarray = { version = "0.16", optional = true }
+ureq = { version = "2", optional = true }
 
 [dev-dependencies]
