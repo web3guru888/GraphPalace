@@ -29,6 +29,13 @@ pub struct Relationship {
     pub valid_from: Option<String>,
     pub valid_to: Option<String>,
     pub observed_at: String,
+    /// Timestamp when this triple was retracted/invalidated in the system.
+    /// Distinct from `valid_to` (which marks the assertion validity window).
+    #[serde(default)]
+    pub invalidated_at: Option<String>,
+    /// Classification: fact, observation, inference, hypothesis.
+    #[serde(default)]
+    pub statement_type: gp_core::types::StatementType,
 }
 
 /// Internal data store shared across threads.
@@ -479,6 +486,28 @@ impl InMemoryBackend {
         object: &str,
         confidence: f64,
     ) -> Result<String> {
+        self.add_relationship_temporal(
+            subject,
+            predicate,
+            object,
+            confidence,
+            None,
+            None,
+            gp_core::types::StatementType::default(),
+        )
+    }
+
+    /// Add a relationship with full bi-temporal and statement-type metadata.
+    pub fn add_relationship_temporal(
+        &self,
+        subject: &str,
+        predicate: &str,
+        object: &str,
+        confidence: f64,
+        valid_from: Option<String>,
+        valid_to: Option<String>,
+        statement_type: gp_core::types::StatementType,
+    ) -> Result<String> {
         let mut d = self.write_data();
         let id = d.gen_id("rel");
         let rel = Relationship {
@@ -487,9 +516,11 @@ impl InMemoryBackend {
             predicate: predicate.to_string(),
             object: object.to_string(),
             confidence,
-            valid_from: None,
-            valid_to: None,
+            valid_from,
+            valid_to,
             observed_at: Utc::now().to_rfc3339(),
+            invalidated_at: None,
+            statement_type,
         };
         d.relationships.push(rel);
         // Edge pheromones for the relationship
@@ -796,15 +827,20 @@ impl InMemoryBackend {
 
     // -- Relationship invalidation & contradictions ----------------------------
 
-    /// Invalidate a relationship by setting its valid_to timestamp.
+    /// Invalidate a relationship by setting its `invalidated_at` timestamp
+    /// (system time of retraction) and closing `valid_to` if still open.
     /// Marks the relationship as no longer current without deleting it.
     pub fn invalidate_relationship(&self, subject: &str, predicate: &str, object: &str) -> bool {
         let mut d = self.write_data();
         let now = chrono::Utc::now().to_rfc3339();
         let mut found = false;
         for rel in d.relationships.iter_mut() {
-            if rel.subject == subject && rel.predicate == predicate && rel.object == object && rel.valid_to.is_none() {
-                rel.valid_to = Some(now.clone());
+            if rel.subject == subject && rel.predicate == predicate && rel.object == object && rel.invalidated_at.is_none() {
+                rel.invalidated_at = Some(now.clone());
+                // Also close the validity window if still open.
+                if rel.valid_to.is_none() {
+                    rel.valid_to = Some(now.clone());
+                }
                 found = true;
             }
         }
@@ -817,7 +853,7 @@ impl InMemoryBackend {
     pub fn find_contradictions(&self, entity: &str) -> Vec<(Relationship, Relationship)> {
         let d = self.read_data();
         let rels: Vec<&Relationship> = d.relationships.iter()
-            .filter(|r| (r.subject == entity || r.object == entity) && r.valid_to.is_none())
+            .filter(|r| (r.subject == entity || r.object == entity) && r.invalidated_at.is_none())
             .collect();
         let mut contradictions = Vec::new();
         for i in 0..rels.len() {

@@ -40,7 +40,7 @@ fn search_benchmark(c: &mut Criterion) {
     let mut palace = make_palace(100);
     c.bench_function("search_100_drawers", |b| {
         b.iter(|| {
-            let _ = palace.search_mut(black_box("benchmark drawer content"), 10);
+            let _ = palace.search(black_box("benchmark drawer content"), 10);
         });
     });
 }

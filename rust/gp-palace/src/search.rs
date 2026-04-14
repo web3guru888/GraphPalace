@@ -17,6 +17,21 @@ pub struct SearchResult {
     pub room_name: String,
 }
 
+/// A potential duplicate match found by `check_duplicate`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DuplicateMatch {
+    /// ID of the existing drawer that matches.
+    pub drawer_id: String,
+    /// Content of the existing drawer.
+    pub content: String,
+    /// Cosine similarity score between the candidate and this drawer.
+    pub similarity: f32,
+    /// Wing containing the matched drawer.
+    pub wing: String,
+    /// Room containing the matched drawer.
+    pub room: String,
+}
+
 /// Boosts search results based on node pheromone levels.
 ///
 /// `boosted_score = raw_score × (1.0 + boost_factor × exploitation)`

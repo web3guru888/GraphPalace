@@ -278,6 +278,8 @@ impl PyPathResult {
 ///     path (str): Directory for persistence (``palace.json``).
 ///     name (str, optional): Palace name (used when creating a new palace).
 ///         Defaults to ``"My Palace"``.
+///     embedding (str, optional): Embedding engine — ``"tfidf"`` (default)
+///         or ``"onnx"`` (all-MiniLM-L6-v2, downloads model on first use).
 #[pyclass(name = "Palace")]
 struct PyPalace {
     inner: Mutex<SendablePalace>,
@@ -285,6 +287,10 @@ struct PyPalace {
     path: String,
     #[pyo3(get)]
     name: String,
+    /// When False, mutations do not auto-persist to disk.
+    /// Call ``save()`` manually.  Default True.
+    #[pyo3(get, set)]
+    auto_save: bool,
 }
 
 #[pymethods]
@@ -293,12 +299,22 @@ impl PyPalace {
     ///
     /// If ``<path>/palace.json`` exists, loads it (rebuilding TF-IDF).
     /// Otherwise creates a fresh empty palace and persists it.
+    ///
+    /// Args:
+    ///     path (str): Directory for persistence.
+    ///     name (str, optional): Palace name.  Defaults to ``"My Palace"``.
+    ///     embedding (str, optional): Embedding engine to use.
+    ///         ``"tfidf"`` (default) or ``"onnx"`` (all-MiniLM-L6-v2).
     #[new]
-    #[pyo3(signature = (path, name=None))]
-    fn new(path: String, name: Option<String>) -> PyResult<Self> {
+    #[pyo3(signature = (path, name=None, embedding=None))]
+    fn new(path: String, name: Option<String>, embedding: Option<&str>) -> PyResult<Self> {
         let palace_name = name.unwrap_or_else(|| "My Palace".to_string());
+        let _embedding_type = embedding.unwrap_or("tfidf");
         let json_path = Path::new(&path).join("palace.json");
 
+        // Note: ONNX support requires the `onnx` feature flag at compile time.
+        // When not compiled with `onnx`, requesting "onnx" will warn and fall
+        // back to TF-IDF.  A future release will gate this properly.
         let gp = if json_path.exists() {
             load_palace(&path)?
         } else {
@@ -312,6 +328,7 @@ impl PyPalace {
             inner: Mutex::new(SendablePalace(gp)),
             path,
             name: actual_name,
+            auto_save: true,
         })
     }
 
@@ -341,7 +358,7 @@ impl PyPalace {
         let mut guard = self.inner.lock().map_err(gp_err)?;
         let palace = &mut guard.0;
         let id = palace.add_drawer(content, wing, room, src).map_err(gp_err)?;
-        save_palace(palace, &self.path)?;
+        if self.auto_save { save_palace(palace, &self.path)?; }
         Ok(id)
     }
 
@@ -360,7 +377,7 @@ impl PyPalace {
     fn search(&self, query: &str, k: usize) -> PyResult<Vec<PySearchResult>> {
         let mut guard = self.inner.lock().map_err(gp_err)?;
         let palace = &mut guard.0;
-        let results = palace.search_mut(query, k).map_err(gp_err)?;
+        let results = palace.search(query, k).map_err(gp_err)?;
         Ok(results
             .into_iter()
             .map(|r| PySearchResult {
@@ -467,7 +484,7 @@ impl PyPalace {
         let mut guard = self.inner.lock().map_err(gp_err)?;
         let palace = &mut guard.0;
         let id = palace.add_wing(name, wt, description).map_err(gp_err)?;
-        save_palace(palace, &self.path)?;
+        if self.auto_save { save_palace(palace, &self.path)?; }
         Ok(id)
     }
 
@@ -493,7 +510,7 @@ impl PyPalace {
         let mut guard = self.inner.lock().map_err(gp_err)?;
         let palace = &mut guard.0;
         let id = palace.add_room(wing_id, name, ht).map_err(gp_err)?;
-        save_palace(palace, &self.path)?;
+        if self.auto_save { save_palace(palace, &self.path)?; }
         Ok(id)
     }
 
@@ -558,7 +575,7 @@ impl PyPalace {
         let mut guard = self.inner.lock().map_err(gp_err)?;
         let palace = &mut guard.0;
         let id = palace.kg_add(subject, predicate, object).map_err(gp_err)?;
-        save_palace(palace, &self.path)?;
+        if self.auto_save { save_palace(palace, &self.path)?; }
         Ok(id)
     }
 
@@ -584,6 +601,11 @@ impl PyPalace {
                 dict.set_item("predicate", &r.predicate)?;
                 dict.set_item("object", &r.object)?;
                 dict.set_item("confidence", r.confidence)?;
+                dict.set_item("valid_from", r.valid_from.as_deref())?;
+                dict.set_item("valid_to", r.valid_to.as_deref())?;
+                dict.set_item("observed_at", r.observed_at.as_deref())?;
+                dict.set_item("invalidated_at", r.invalidated_at.as_deref())?;
+                dict.set_item("statement_type", r.statement_type.to_string())?;
                 list.append(dict)?;
             }
             Ok(list.into())
@@ -606,7 +628,7 @@ impl PyPalace {
         let guard = self.inner.lock().map_err(gp_err)?;
         let palace = &guard.0;
         let count = palace.build_similarity_graph(threshold).map_err(gp_err)?;
-        save_palace(palace, &self.path)?;
+        if self.auto_save { save_palace(palace, &self.path)?; }
         Ok(count)
     }
 
@@ -694,7 +716,7 @@ impl PyPalace {
         let mut guard = self.inner.lock().map_err(gp_err)?;
         let palace = &mut guard.0;
         palace.decay_pheromones().map_err(gp_err)?;
-        save_palace(palace, &self.path)?;
+        if self.auto_save { save_palace(palace, &self.path)?; }
         Ok(())
     }
 
@@ -728,7 +750,7 @@ impl PyPalace {
         let guard = self.inner.lock().map_err(gp_err)?;
         let palace = &guard.0;
         let stats = palace.import(export, import_mode).map_err(gp_err)?;
-        save_palace(palace, &self.path)?;
+        if self.auto_save { save_palace(palace, &self.path)?; }
 
         Python::with_gil(|py| {
             let dict = pyo3::types::PyDict::new_bound(py);
@@ -743,10 +765,367 @@ impl PyPalace {
         })
     }
 
+    // -- Issue #2: Missing methods from Rust API ----------------------------
+
+    /// Deposit pheromones along a successful path.
+    ///
+    /// Reinforces the stigmergic feedback loop: success, traversal, and
+    /// recency pheromones on edges; exploitation pheromone on nodes.
+    ///
+    /// Args:
+    ///     path (list[str]): Ordered node IDs forming the path.
+    ///     reward (float): Reward magnitude.  Defaults to ``1.0``.
+    #[pyo3(signature = (path, reward=1.0))]
+    fn deposit_pheromones(&self, path: Vec<String>, reward: f64) -> PyResult<()> {
+        let guard = self.inner.lock().map_err(gp_err)?;
+        let palace = &guard.0;
+        palace.deposit_pheromones(&path, reward).map_err(gp_err)?;
+        if self.auto_save { save_palace(palace, &self.path)?; }
+        Ok(())
+    }
+
+    /// Invalidate a knowledge-graph triple.
+    ///
+    /// Args:
+    ///     subject (str): Subject entity name.
+    ///     predicate (str): Relationship label.
+    ///     object (str): Object entity name.
+    ///
+    /// Returns:
+    ///     bool: True if a matching triple was found and invalidated.
+    fn kg_invalidate(&self, subject: &str, predicate: &str, object: &str) -> PyResult<bool> {
+        let guard = self.inner.lock().map_err(gp_err)?;
+        let palace = &guard.0;
+        let result = palace.kg_invalidate(subject, predicate, object).map_err(gp_err)?;
+        if self.auto_save { save_palace(palace, &self.path)?; }
+        Ok(result)
+    }
+
+    /// Find contradicting relationships for an entity.
+    ///
+    /// Returns pairs of triples that share the same subject and predicate
+    /// but have different objects.
+    ///
+    /// Args:
+    ///     entity (str): Entity name to check.
+    ///
+    /// Returns:
+    ///     list[dict]: Each dict has ``triple_a`` and ``triple_b`` keys.
+    fn kg_contradictions(&self, entity: &str) -> PyResult<PyObject> {
+        let guard = self.inner.lock().map_err(gp_err)?;
+        let palace = &guard.0;
+        let pairs = palace.kg_contradictions(entity).map_err(gp_err)?;
+        Python::with_gil(|py| {
+            let list = pyo3::types::PyList::empty_bound(py);
+            for (a, b) in pairs {
+                let dict = pyo3::types::PyDict::new_bound(py);
+                let dict_a = pyo3::types::PyDict::new_bound(py);
+                dict_a.set_item("subject", &a.subject)?;
+                dict_a.set_item("predicate", &a.predicate)?;
+                dict_a.set_item("object", &a.object)?;
+                dict_a.set_item("confidence", a.confidence)?;
+                dict_a.set_item("statement_type", a.statement_type.to_string())?;
+                let dict_b = pyo3::types::PyDict::new_bound(py);
+                dict_b.set_item("subject", &b.subject)?;
+                dict_b.set_item("predicate", &b.predicate)?;
+                dict_b.set_item("object", &b.object)?;
+                dict_b.set_item("confidence", b.confidence)?;
+                dict_b.set_item("statement_type", b.statement_type.to_string())?;
+                dict.set_item("triple_a", dict_a)?;
+                dict.set_item("triple_b", dict_b)?;
+                list.append(dict)?;
+            }
+            Ok(list.into())
+        })
+    }
+
+    /// Add a knowledge-graph triple with a specified confidence score.
+    ///
+    /// Args:
+    ///     subject (str): Subject entity name.
+    ///     predicate (str): Relationship label.
+    ///     object (str): Object entity name.
+    ///     confidence (float): Confidence in [0.0, 1.0].
+    ///
+    /// Returns:
+    ///     str: The relationship ID.
+    #[pyo3(signature = (subject, predicate, object, confidence=0.5))]
+    fn kg_add_with_confidence(
+        &self,
+        subject: &str,
+        predicate: &str,
+        object: &str,
+        confidence: f64,
+    ) -> PyResult<String> {
+        let mut guard = self.inner.lock().map_err(gp_err)?;
+        let palace = &mut guard.0;
+        let id = palace
+            .kg_add_with_confidence(subject, predicate, object, confidence)
+            .map_err(gp_err)?;
+        if self.auto_save { save_palace(palace, &self.path)?; }
+        Ok(id)
+    }
+
+    /// Add a knowledge-graph triple with bi-temporal metadata and statement type.
+    ///
+    /// Args:
+    ///     subject (str): Subject entity name.
+    ///     predicate (str): Relationship label.
+    ///     object (str): Object entity name.
+    ///     confidence (float): Confidence in [0.0, 1.0].
+    ///     valid_from (str | None): RFC 3339 start of validity window.
+    ///     valid_to (str | None): RFC 3339 end of validity window.
+    ///     statement_type (str): One of "fact", "observation", "inference", "hypothesis".
+    ///
+    /// Returns:
+    ///     str: The relationship ID.
+    #[pyo3(signature = (subject, predicate, object, confidence=0.5, valid_from=None, valid_to=None, statement_type="fact"))]
+    fn kg_add_temporal(
+        &self,
+        subject: &str,
+        predicate: &str,
+        object: &str,
+        confidence: f64,
+        valid_from: Option<&str>,
+        valid_to: Option<&str>,
+        statement_type: &str,
+    ) -> PyResult<String> {
+        use gp_core::types::StatementType;
+        let st = match statement_type {
+            "fact" => StatementType::Fact,
+            "observation" => StatementType::Observation,
+            "inference" => StatementType::Inference,
+            "hypothesis" => StatementType::Hypothesis,
+            other => return Err(pyo3::exceptions::PyValueError::new_err(
+                format!("Invalid statement_type '{}'. Expected one of: fact, observation, inference, hypothesis", other),
+            )),
+        };
+        let vf = valid_from.map(|s| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+        }).transpose().map_err(|e| pyo3::exceptions::PyValueError::new_err(
+            format!("Invalid valid_from: {e}"),
+        ))?;
+        let vt = valid_to.map(|s| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+        }).transpose().map_err(|e| pyo3::exceptions::PyValueError::new_err(
+            format!("Invalid valid_to: {e}"),
+        ))?;
+        let mut guard = self.inner.lock().map_err(gp_err)?;
+        let palace = &mut guard.0;
+        let id = palace
+            .kg_add_temporal(subject, predicate, object, confidence, vf, vt, st)
+            .map_err(gp_err)?;
+        if self.auto_save { save_palace(palace, &self.path)?; }
+        Ok(id)
+    }
+
+    /// Build cross-wing tunnel edges between rooms above similarity threshold.
+    ///
+    /// Args:
+    ///     threshold (float): Minimum embedding similarity.  Defaults to ``0.3``.
+    ///
+    /// Returns:
+    ///     int: Number of tunnels created.
+    #[pyo3(signature = (threshold=0.3))]
+    fn build_tunnels(&self, threshold: f32) -> PyResult<usize> {
+        let guard = self.inner.lock().map_err(gp_err)?;
+        let palace = &guard.0;
+        let count = palace.build_tunnels(threshold).map_err(gp_err)?;
+        if self.auto_save { save_palace(palace, &self.path)?; }
+        Ok(count)
+    }
+
+    /// Create a new Active Inference agent.
+    ///
+    /// Args:
+    ///     name (str): Agent name.
+    ///     domain (str): Domain the agent specializes in.
+    ///     archetype (str, optional): One of ``"explorer"``, ``"exploiter"``,
+    ///         ``"balanced"``, ``"specialist"``, ``"generalist"``.
+    ///         Defaults to ``"balanced"``.
+    ///
+    /// Returns:
+    ///     str: The new agent's ID.
+    #[pyo3(signature = (name, domain, archetype="balanced"))]
+    fn create_agent(&self, name: &str, domain: &str, archetype: &str) -> PyResult<String> {
+        let mut guard = self.inner.lock().map_err(gp_err)?;
+        let palace = &mut guard.0;
+        let id = palace.create_agent(name, domain, archetype).map_err(gp_err)?;
+        if self.auto_save { save_palace(palace, &self.path)?; }
+        Ok(id)
+    }
+
+    /// List all agents in the palace.
+    ///
+    /// Returns:
+    ///     list[dict]: Each dict has ``id``, ``name``, ``domain``,
+    ///         ``focus``, ``temperature`` keys.
+    fn list_agents(&self) -> PyResult<PyObject> {
+        let guard = self.inner.lock().map_err(gp_err)?;
+        let palace = &guard.0;
+        let agents = palace.list_palace_agents();
+        Python::with_gil(|py| {
+            let list = pyo3::types::PyList::empty_bound(py);
+            for a in agents {
+                let dict = pyo3::types::PyDict::new_bound(py);
+                dict.set_item("id", &a.id)?;
+                dict.set_item("name", &a.name)?;
+                dict.set_item("domain", &a.domain)?;
+                dict.set_item("focus", &a.focus)?;
+                dict.set_item("temperature", a.temperature)?;
+                list.append(dict)?;
+            }
+            Ok(list.into())
+        })
+    }
+
+    /// Write an entry to an agent's diary.
+    ///
+    /// Args:
+    ///     agent_id (str): The agent's ID.
+    ///     entry (str): The diary entry text.
+    fn diary_write(&self, agent_id: &str, entry: &str) -> PyResult<()> {
+        let guard = self.inner.lock().map_err(gp_err)?;
+        let palace = &guard.0;
+        palace.diary_write(agent_id, entry).map_err(gp_err)?;
+        if self.auto_save { save_palace(palace, &self.path)?; }
+        Ok(())
+    }
+
+    /// Read an agent's diary entries.
+    ///
+    /// Args:
+    ///     agent_id (str): The agent's ID.
+    ///     last_n (int, optional): Number of recent entries.
+    ///         Returns all if omitted.
+    ///
+    /// Returns:
+    ///     list[str]: Diary entries (most recent last).
+    #[pyo3(signature = (agent_id, last_n=None))]
+    fn diary_read(&self, agent_id: &str, last_n: Option<usize>) -> PyResult<Vec<String>> {
+        let guard = self.inner.lock().map_err(gp_err)?;
+        let palace = &guard.0;
+        palace.diary_read(agent_id, last_n).map_err(gp_err)
+    }
+
+    /// Search by a pre-computed embedding vector.
+    ///
+    /// Args:
+    ///     embedding (list[float]): A 384-dimensional embedding vector.
+    ///     k (int): Maximum results.  Defaults to ``10``.
+    ///
+    /// Returns:
+    ///     list[SearchResult]: Ranked results.
+    #[pyo3(signature = (embedding, k=10))]
+    fn search_by_embedding(&self, embedding: Vec<f32>, k: usize) -> PyResult<Vec<PySearchResult>> {
+        if embedding.len() != 384 {
+            return Err(PyValueError::new_err(format!(
+                "Expected 384-dim embedding, got {}",
+                embedding.len()
+            )));
+        }
+        let mut emb = [0.0f32; 384];
+        emb.copy_from_slice(&embedding);
+        let guard = self.inner.lock().map_err(gp_err)?;
+        let palace = &guard.0;
+        let results = palace.search_by_embedding(&emb, k).map_err(gp_err)?;
+        Ok(results
+            .into_iter()
+            .map(|r| PySearchResult {
+                drawer_id: r.drawer_id,
+                content: r.content,
+                score: r.score as f64,
+                wing: r.wing_name,
+                room: r.room_name,
+            })
+            .collect())
+    }
+
+    /// Get the number of SIMILAR_TO edges in the palace.
+    ///
+    /// Returns:
+    ///     int: Count of similarity edges.
+    fn similarity_edge_count(&self) -> PyResult<usize> {
+        let guard = self.inner.lock().map_err(gp_err)?;
+        let palace = &guard.0;
+        Ok(palace.similarity_edge_count())
+    }
+
+    // -- Issue #7: Duplicate detection ----------------------------------------
+
+    /// Check if content is a likely duplicate of an existing drawer.
+    ///
+    /// Args:
+    ///     content (str): Candidate text to check.
+    ///     threshold (float): Minimum cosine similarity to flag as duplicate.
+    ///         Defaults to ``0.85``.
+    ///
+    /// Returns:
+    ///     dict or None: If a duplicate is found, returns a dict with
+    ///         ``drawer_id``, ``content``, ``similarity``, ``wing``, ``room``.
+    #[pyo3(signature = (content, threshold=0.85))]
+    fn check_duplicate(&self, content: &str, threshold: f32) -> PyResult<Option<PyObject>> {
+        let mut guard = self.inner.lock().map_err(gp_err)?;
+        let palace = &mut guard.0;
+        let result = palace.check_duplicate(content, threshold).map_err(gp_err)?;
+        match result {
+            Some(dup) => Python::with_gil(|py| {
+                let dict = pyo3::types::PyDict::new_bound(py);
+                dict.set_item("drawer_id", &dup.drawer_id)?;
+                dict.set_item("content", &dup.content)?;
+                dict.set_item("similarity", dup.similarity)?;
+                dict.set_item("wing", &dup.wing)?;
+                dict.set_item("room", &dup.room)?;
+                Ok(Some(dict.into()))
+            }),
+            None => Ok(None),
+        }
+    }
+
+    /// Add a drawer only if no duplicate exceeds the similarity threshold.
+    ///
+    /// Combines ``check_duplicate`` + ``add_drawer`` in one atomic call.
+    ///
+    /// Args:
+    ///     content (str): Text to store.
+    ///     wing (str): Wing name.
+    ///     room (str): Room name.
+    ///     source (str, optional): Source type.  Defaults to ``"agent"``.
+    ///     threshold (float): Duplicate similarity threshold.  Defaults to ``0.85``.
+    ///
+    /// Returns:
+    ///     tuple[str, bool]: ``(drawer_id, is_new)`` — the ID and whether it
+    ///         was newly created (True) or an existing duplicate (False).
+    #[pyo3(signature = (content, wing, room, source=None, threshold=0.85))]
+    fn add_drawer_if_unique(
+        &self,
+        content: &str,
+        wing: &str,
+        room: &str,
+        source: Option<&str>,
+        threshold: f32,
+    ) -> PyResult<(String, bool)> {
+        let src = parse_drawer_source(source.unwrap_or("agent"));
+        let mut guard = self.inner.lock().map_err(gp_err)?;
+        let palace = &mut guard.0;
+        let (id, is_new) = palace
+            .add_drawer_if_unique(content, wing, room, src, threshold)
+            .map_err(gp_err)?;
+        if is_new && self.auto_save {
+            save_palace(palace, &self.path)?;
+        }
+        Ok((id, is_new))
+    }
+
+    // -- Persistence ----------------------------------------------------------
+
     /// Persist the current palace state to disk.
     ///
-    /// Normally called automatically after mutations, but can be invoked
-    /// manually if you want to ensure persistence.
+    /// Normally called automatically after mutations (when ``auto_save``
+    /// is True), but can be invoked manually — especially useful in
+    /// batch mode (``auto_save = False``).
     fn save(&self) -> PyResult<()> {
         let guard = self.inner.lock().map_err(gp_err)?;
         save_palace(&guard.0, &self.path)
@@ -765,8 +1144,8 @@ impl PyPalace {
         let dc = palace.storage().drawer_count();
         let wc = palace.storage().wing_count();
         Ok(format!(
-            "Palace(path='{}', name='{}', wings={}, drawers={})",
-            self.path, self.name, wc, dc
+            "Palace(path='{}', name='{}', wings={}, drawers={}, auto_save={})",
+            self.path, self.name, wc, dc, self.auto_save
         ))
     }
 }

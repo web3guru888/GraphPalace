@@ -75,7 +75,7 @@ fn butters_palace_lifecycle() {
     assert!(status.closet_count >= 3); // auto-created "General" closets
 
     // 5. Semantic search
-    let results = palace.search_mut("pheromone navigation stigmergy", 3).unwrap();
+    let results = palace.search("pheromone navigation stigmergy", 3).unwrap();
     assert!(!results.is_empty(), "Search should return results");
     // The top result should be about GraphPalace (contains "pheromone")
     assert!(
@@ -84,7 +84,7 @@ fn butters_palace_lifecycle() {
         results[0].content,
     );
 
-    let results2 = palace.search_mut("Robin BUTTERS creator", 3).unwrap();
+    let results2 = palace.search("Robin BUTTERS creator", 3).unwrap();
     assert!(!results2.is_empty(), "Search for Robin should return results");
 
     // 6. Export/import roundtrip
@@ -119,7 +119,7 @@ fn butters_search_relevance() {
     palace.add_drawer("The A* algorithm finds optimal paths using semantic similarity and pheromone guidance", "projects", "graphpalace", DrawerSource::Conversation).unwrap();
 
     // Search should return something
-    let results = palace.search_mut("pathfinding algorithm", 5).unwrap();
+    let results = palace.search("pathfinding algorithm", 5).unwrap();
     assert!(!results.is_empty(), "Search for pathfinding should return results");
 
     // All results should have scores

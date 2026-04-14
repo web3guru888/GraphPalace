@@ -366,6 +366,37 @@ impl Tunnel {
     }
 }
 
+/// Classification of a knowledge graph statement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StatementType {
+    /// An established, verified fact.
+    Fact,
+    /// A direct observation (may be noisy or context-dependent).
+    Observation,
+    /// A conclusion derived from other statements.
+    Inference,
+    /// A tentative, unverified proposition.
+    Hypothesis,
+}
+
+impl Default for StatementType {
+    fn default() -> Self {
+        Self::Fact
+    }
+}
+
+impl std::fmt::Display for StatementType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Fact => write!(f, "fact"),
+            Self::Observation => write!(f, "observation"),
+            Self::Inference => write!(f, "inference"),
+            Self::Hypothesis => write!(f, "hypothesis"),
+        }
+    }
+}
+
 /// Entity → Entity knowledge graph relationship.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelatesTo {
@@ -378,6 +409,12 @@ pub struct RelatesTo {
     pub valid_from: Option<DateTime<Utc>>,
     pub valid_to: Option<DateTime<Utc>>,
     pub observed_at: DateTime<Utc>,
+    /// Timestamp when this triple was retracted/invalidated in the system.
+    #[serde(default)]
+    pub invalidated_at: Option<DateTime<Utc>>,
+    /// Classification of this statement (fact, observation, inference, hypothesis).
+    #[serde(default)]
+    pub statement_type: StatementType,
 }
 
 impl RelatesTo {
@@ -392,6 +429,8 @@ impl RelatesTo {
             valid_from: None,
             valid_to: None,
             observed_at: Utc::now(),
+            invalidated_at: None,
+            statement_type: StatementType::default(),
         }
     }
 }
