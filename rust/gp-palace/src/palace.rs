@@ -18,6 +18,7 @@ use gp_storage::memory::InMemoryBackend;
 
 use crate::export::{ImportMode, ImportStats, PalaceExport};
 use crate::lifecycle::{ColdSpot, HotPath, KgRelationship, PalaceStatus};
+use crate::search;
 use crate::search::{PheromoneBooster, SearchResult};
 
 // ---------------------------------------------------------------------------
