@@ -102,6 +102,8 @@ pub struct AddRoom {
     pub wing_id: String,
     pub name: String,
     pub hall_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// Check whether content is a near-duplicate of an existing drawer.
@@ -124,6 +126,15 @@ pub struct KgAdd {
     pub object: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub confidence: Option<f64>,
+    /// RFC 3339 start of validity window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub valid_from: Option<String>,
+    /// RFC 3339 end of validity window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub valid_to: Option<String>,
+    /// Classification: "fact", "observation", "inference", "hypothesis".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub statement_type: Option<String>,
 }
 
 /// Query triples for an entity, optionally at a point in time.
@@ -325,9 +336,10 @@ pub fn tool_catalog() -> Vec<ToolDefinition> {
             "description" => "string"
         }),
         tool_def!("add_room", "Create a new room in an existing wing.", {
-            "wing_id"   => "string";
-            "name"      => "string";
-            "hall_type" => "string"
+            "wing_id"     => "string";
+            "name"        => "string";
+            "hall_type"   => "string";
+            "description" => "string", optional: true
         }),
         tool_def!("check_duplicate", "Check whether content is a near-duplicate of an existing drawer.", {
             "content"   => "string";
@@ -336,10 +348,13 @@ pub fn tool_catalog() -> Vec<ToolDefinition> {
 
         // ── Knowledge Graph ─────────────────────────────────────────
         tool_def!("kg_add", "Add a (subject, predicate, object) triple to the knowledge graph.", {
-            "subject"    => "string";
-            "predicate"  => "string";
-            "object"     => "string";
-            "confidence" => "number", optional: true
+            "subject"        => "string";
+            "predicate"      => "string";
+            "object"         => "string";
+            "confidence"     => "number", optional: true;
+            "valid_from"     => "string", optional: true;
+            "valid_to"       => "string", optional: true;
+            "statement_type" => "string", optional: true
         }),
         tool_def!("kg_query", "Query triples for an entity, optionally at a point in time.", {
             "entity" => "string";
@@ -552,6 +567,20 @@ mod tests {
             wing_id: "w1".into(),
             name: "Quantum".into(),
             hall_type: "topic".into(),
+            description: None,
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        let back: AddRoom = serde_json::from_str(&json).unwrap();
+        assert_eq!(t, back);
+    }
+
+    #[test]
+    fn add_room_with_description_roundtrip() {
+        let t = AddRoom {
+            wing_id: "w1".into(),
+            name: "Quantum".into(),
+            hall_type: "topic".into(),
+            description: Some("Quantum mechanics research".into()),
         };
         let json = serde_json::to_string(&t).unwrap();
         let back: AddRoom = serde_json::from_str(&json).unwrap();
@@ -575,8 +604,29 @@ mod tests {
             predicate: "discovered".into(),
             object: "relativity".into(),
             confidence: Some(0.99),
+            valid_from: None,
+            valid_to: None,
+            statement_type: None,
         };
         let json = serde_json::to_string(&t).unwrap();
+        let back: KgAdd = serde_json::from_str(&json).unwrap();
+        assert_eq!(t, back);
+    }
+
+    #[test]
+    fn kg_add_temporal_roundtrip() {
+        let t = KgAdd {
+            subject: "Earth".into(),
+            predicate: "orbits".into(),
+            object: "Sun".into(),
+            confidence: Some(1.0),
+            valid_from: Some("2026-01-01T00:00:00+00:00".into()),
+            valid_to: None,
+            statement_type: Some("fact".into()),
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        assert!(json.contains("valid_from"));
+        assert!(json.contains("statement_type"));
         let back: KgAdd = serde_json::from_str(&json).unwrap();
         assert_eq!(t, back);
     }

@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn generate_palace_tfidf_search_returns_results() {
         let (mut palace, _) = generate_palace_tfidf(1, 2, 5, 0);
-        let results = palace.search_mut("quantum entanglement", 5).unwrap();
+        let results = palace.search("quantum entanglement", 5).unwrap();
         assert!(!results.is_empty(), "TF-IDF search should return results");
     }
 

@@ -104,7 +104,7 @@ pub fn measure_search_throughput(
 
     let t0 = Instant::now();
     for q in &queries {
-        let _ = palace.search_mut(q, 10);
+        let _ = palace.search(q, 10);
     }
     let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
 

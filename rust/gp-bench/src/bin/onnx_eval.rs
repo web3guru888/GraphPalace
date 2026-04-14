@@ -119,7 +119,7 @@ fn run_search_quality(palace: &mut GraphPalace) {
     println!("|---|-------|-------------|---------|-------|-----|-------------|");
 
     for (i, test) in SEARCH_TESTS.iter().enumerate() {
-        let results = palace.search_mut(test.query, 10).unwrap_or_default();
+        let results = palace.search(test.query, 10).unwrap_or_default();
 
         let top1_match = results.first()
             .is_some_and(|r| r.content.contains(test.expected_top));
@@ -163,7 +163,7 @@ fn run_search_quality(palace: &mut GraphPalace) {
     if fail > 0 {
         println!("\n  Failed queries:");
         for (i, test) in SEARCH_TESTS.iter().enumerate() {
-            let results = palace.search_mut(test.query, 3).unwrap_or_default();
+            let results = palace.search(test.query, 3).unwrap_or_default();
             let top1_match = results.first()
                 .is_some_and(|r| r.content.contains(test.expected_top));
             if !top1_match {
@@ -200,7 +200,7 @@ fn run_throughput_benchmarks(palace: &mut GraphPalace) {
     let mut total_us = 0u128;
     for q in &queries {
         let t0 = Instant::now();
-        let _ = palace.search_mut(q, 10);
+        let _ = palace.search(q, 10);
         let elapsed = t0.elapsed();
         total_us += elapsed.as_micros();
         println!("  '{}...' → {:.1}ms", &q[..q.len().min(40)], elapsed.as_secs_f64() * 1000.0);
@@ -260,7 +260,7 @@ fn run_pheromone_test(palace: &mut GraphPalace) {
     println!("╚══════════════════════════════════════════════════════════════╝\n");
 
     // 1. Search for something and deposit pheromones on the path
-    let results = palace.search_mut("pheromone navigation stigmergy", 3).unwrap();
+    let results = palace.search("pheromone navigation stigmergy", 3).unwrap();
     println!("Search for 'pheromone navigation stigmergy':");
     for (i, r) in results.iter().enumerate() {
         println!("  {}: [score={:.4}] {} (id={})", i+1, r.score, &r.content[..r.content.len().min(70)], r.drawer_id);
@@ -291,7 +291,7 @@ fn run_pheromone_test(palace: &mut GraphPalace) {
     }
 
     // 4. Search again — pheromone boost should change ranking
-    let results2 = palace.search_mut("pheromone navigation stigmergy", 3).unwrap();
+    let results2 = palace.search("pheromone navigation stigmergy", 3).unwrap();
     println!("\n### Re-search after pheromone deposit:");
     for (i, r) in results2.iter().enumerate() {
         println!("  {}: [score={:.4}] {} (id={})", i+1, r.score, &r.content[..r.content.len().min(70)], r.drawer_id);
@@ -510,7 +510,7 @@ fn main() {
 
     let mut pass = 0;
     for (query, expected) in &spot_checks {
-        let results = palace.search_mut(query, 1).unwrap();
+        let results = palace.search(query, 1).unwrap();
         let hit = results.first().is_some_and(|r| r.content.contains(expected));
         if hit { pass += 1; }
         let mark = if hit { "PASS" } else { "FAIL" };

@@ -3,6 +3,8 @@
 //! Coordinates storage, embeddings, pathfinding, stigmergy, and
 //! knowledge graph into a single coherent API.
 
+use std::cell::RefCell;
+
 use chrono::{DateTime, Utc};
 
 use gp_core::config::GraphPalaceConfig;
@@ -269,8 +271,9 @@ impl<'a> GraphAccess for BackendGraphAccess<'a> {
 pub struct GraphPalace {
     /// The storage backend.
     storage: InMemoryBackend,
-    /// Embedding engine for encoding text.
-    embeddings: Box<dyn EmbeddingEngine>,
+    /// Embedding engine for encoding text (behind `RefCell` so `search`
+    /// can encode queries with only `&self`).
+    embeddings: RefCell<Box<dyn EmbeddingEngine>>,
     /// Palace configuration.
     config: GraphPalaceConfig,
     /// Pheromone booster for search.
@@ -291,7 +294,7 @@ impl GraphPalace {
         storage.init_schema()?;
         Ok(Self {
             storage,
-            embeddings,
+            embeddings: RefCell::new(embeddings),
             config,
             booster: PheromoneBooster::default(),
             last_decay_time: None,
@@ -319,6 +322,7 @@ impl GraphPalace {
     ) -> Result<String> {
         let embedding = self
             .embeddings
+            .borrow_mut()
             .encode(name)
             .map_err(|e| GraphPalaceError::Embedding(e.to_string()))?;
         self.storage
@@ -334,8 +338,22 @@ impl GraphPalace {
         name: &str,
         hall_type: HallType,
     ) -> Result<String> {
+        self.add_room_with_description(wing_id, name, hall_type, None)
+    }
+
+    /// Create a new room in a wing with an optional description.
+    ///
+    /// Automatically creates HALL edges to all existing rooms in the same wing.
+    pub fn add_room_with_description(
+        &mut self,
+        wing_id: &str,
+        name: &str,
+        hall_type: HallType,
+        description: Option<&str>,
+    ) -> Result<String> {
         let embedding = self
             .embeddings
+            .borrow_mut()
             .encode(name)
             .map_err(|e| GraphPalaceError::Embedding(e.to_string()))?;
 
@@ -343,8 +361,9 @@ impl GraphPalace {
         let existing_rooms: Vec<String> = self.storage.list_rooms(wing_id)
             .iter().map(|r| r.id.clone()).collect();
 
+        let desc = description.unwrap_or(name);
         let room_id = self.storage
-            .create_room(wing_id, name, hall_type, name, embedding)?;
+            .create_room(wing_id, name, hall_type, desc, embedding)?;
 
         // Create hall edges to all existing rooms in the same wing
         for existing_id in &existing_rooms {
@@ -367,6 +386,7 @@ impl GraphPalace {
     ) -> Result<String> {
         let embedding = self
             .embeddings
+            .borrow_mut()
             .encode(content)
             .map_err(|e| GraphPalaceError::Embedding(e.to_string()))?;
 
@@ -376,6 +396,7 @@ impl GraphPalace {
             None => {
                 let wing_emb = self
                     .embeddings
+                    .borrow_mut()
                     .encode(wing_name)
                     .map_err(|e| GraphPalaceError::Embedding(e.to_string()))?;
                 self.storage
@@ -437,6 +458,7 @@ impl GraphPalace {
         // Create a "General" closet
         let closet_emb = self
             .embeddings
+            .borrow_mut()
             .encode("General")
             .map_err(|e| GraphPalaceError::Embedding(e.to_string()))?;
         self.storage
@@ -446,23 +468,28 @@ impl GraphPalace {
     // -- Search -------------------------------------------------------------
 
     /// Semantic search across all drawers, boosted by pheromones.
-    /// Semantic search (immutable — requires a pre-computed embedding).
     ///
-    /// If you have the raw query text, use [`search_mut`] instead which
-    /// encodes the text for you.
-    pub fn search(&self, _query: &str, _k: usize) -> Result<Vec<SearchResult>> {
-        Err(GraphPalaceError::Embedding(
-            "Use search_mut() for mutable borrow, or search_by_embedding()".into(),
-        ))
-    }
-
-    /// Semantic search (requires &mut self for embedding encoding).
-    pub fn search_mut(&mut self, query: &str, k: usize) -> Result<Vec<SearchResult>> {
+    /// Encodes the query via the embedding engine and returns the top-k
+    /// drawers ranked by cosine similarity × pheromone boost.
+    ///
+    /// Thanks to interior mutability (`RefCell`) on the embedding engine,
+    /// this now works with `&self` — no need for `search_mut`.
+    pub fn search(&self, query: &str, k: usize) -> Result<Vec<SearchResult>> {
         let query_embedding = self
             .embeddings
+            .borrow_mut()
             .encode(query)
             .map_err(|e| GraphPalaceError::Embedding(e.to_string()))?;
         self.search_by_embedding(&query_embedding, k)
+    }
+
+    /// Semantic search (legacy alias — now delegates to [`search`]).
+    ///
+    /// Kept for backward compatibility. Prefer [`search`] which no longer
+    /// requires `&mut self`.
+    #[deprecated(since = "0.2.0", note = "Use search() instead — &mut self no longer needed")]
+    pub fn search_mut(&mut self, query: &str, k: usize) -> Result<Vec<SearchResult>> {
+        self.search(query, k)
     }
 
     /// Search by a pre-computed embedding vector.
@@ -616,6 +643,34 @@ impl GraphPalace {
             .add_relationship(&subj_id, predicate, &obj_id, confidence)
     }
 
+    /// Add a relationship triple with full bi-temporal metadata and statement classification.
+    ///
+    /// `valid_from` / `valid_to` define the real-world validity window of the
+    /// assertion. `statement_type` classifies the triple (Fact, Observation,
+    /// Inference, Hypothesis). `observed_at` is set automatically to *now*.
+    pub fn kg_add_temporal(
+        &mut self,
+        subject: &str,
+        predicate: &str,
+        object: &str,
+        confidence: f64,
+        valid_from: Option<chrono::DateTime<chrono::Utc>>,
+        valid_to: Option<chrono::DateTime<chrono::Utc>>,
+        statement_type: StatementType,
+    ) -> Result<String> {
+        let subj_id = self.find_or_create_entity(subject)?;
+        let obj_id = self.find_or_create_entity(object)?;
+        self.storage.add_relationship_temporal(
+            &subj_id,
+            predicate,
+            &obj_id,
+            confidence,
+            valid_from.map(|t| t.to_rfc3339()),
+            valid_to.map(|t| t.to_rfc3339()),
+            statement_type,
+        )
+    }
+
     /// Query knowledge graph relationships involving an entity.
     pub fn kg_query(&self, entity: &str) -> Result<Vec<KgRelationship>> {
         // Try to find entity by name
@@ -643,6 +698,11 @@ impl GraphPalace {
                     predicate: r.predicate,
                     object: obj_name,
                     confidence: r.confidence,
+                    valid_from: r.valid_from,
+                    valid_to: r.valid_to,
+                    observed_at: Some(r.observed_at),
+                    invalidated_at: r.invalidated_at,
+                    statement_type: r.statement_type,
                 }
             })
             .collect())
@@ -671,10 +731,20 @@ impl GraphPalace {
             let resolve = |id: &str| -> String {
                 d.entities.get(id).map(|e| e.name.clone()).unwrap_or_else(|| id.to_string())
             };
-            (
-                KgRelationship { subject: resolve(&a.subject), predicate: a.predicate, object: resolve(&a.object), confidence: a.confidence },
-                KgRelationship { subject: resolve(&b.subject), predicate: b.predicate, object: resolve(&b.object), confidence: b.confidence },
-            )
+            let map_rel = |r: gp_storage::memory::Relationship| -> KgRelationship {
+                KgRelationship {
+                    subject: resolve(&r.subject),
+                    predicate: r.predicate,
+                    object: resolve(&r.object),
+                    confidence: r.confidence,
+                    valid_from: r.valid_from,
+                    valid_to: r.valid_to,
+                    observed_at: Some(r.observed_at),
+                    invalidated_at: r.invalidated_at,
+                    statement_type: r.statement_type,
+                }
+            };
+            (map_rel(a), map_rel(b))
         }).collect())
     }
 
@@ -700,7 +770,7 @@ impl GraphPalace {
 
     /// Create a new agent in the palace.
     pub fn create_agent(&mut self, name: &str, domain: &str, archetype: &str) -> Result<String> {
-        let goal_emb = self.embeddings.encode(domain)
+        let goal_emb = self.embeddings.borrow_mut().encode(domain)
             .map_err(|e| GraphPalaceError::Embedding(e.to_string()))?;
         let temperature = match archetype.to_lowercase().as_str() {
             "explorer" => 1.0,
@@ -719,6 +789,7 @@ impl GraphPalace {
         }
         let emb = self
             .embeddings
+            .borrow_mut()
             .encode(name)
             .map_err(|e| GraphPalaceError::Embedding(e.to_string()))?;
         self.storage
@@ -804,9 +875,15 @@ impl GraphPalace {
 
     // -- Entity extraction --------------------------------------------------
 
-    /// Extract likely entity names from text content.
+    /// Extract likely entity names from text content (public static version).
+    ///
     /// Finds capitalized phrases (2+ consecutive capitalized words) and
     /// standalone capitalized words that aren't at the start of sentences.
+    pub fn extract_entity_names_static(text: &str) -> Vec<String> {
+        Self::extract_entity_names(text)
+    }
+
+    /// Extract likely entity names from text content.
     fn extract_entity_names(text: &str) -> Vec<String> {
         let mut entities = Vec::new();
         let words: Vec<&str> = text.split_whitespace().collect();
@@ -843,6 +920,56 @@ impl GraphPalace {
         entities.sort();
         entities.dedup();
         entities
+    }
+
+    // -- Duplicate detection -------------------------------------------------
+
+    /// Check if content is a likely duplicate of an existing drawer.
+    ///
+    /// Searches for the most similar existing drawers and returns the best
+    /// match if its similarity exceeds `threshold`.
+    ///
+    /// # Arguments
+    /// - `content`: The candidate text to check.
+    /// - `threshold`: Minimum cosine similarity to consider a duplicate (0.0–1.0).
+    ///
+    /// # Returns
+    /// `Some(DuplicateMatch)` if a drawer above the threshold exists, `None` otherwise.
+    pub fn check_duplicate(
+        &mut self,
+        content: &str,
+        threshold: f32,
+    ) -> Result<Option<search::DuplicateMatch>> {
+        let results = self.search(content, 5)?;
+        Ok(results
+            .into_iter()
+            .find(|r| r.score >= threshold)
+            .map(|r| search::DuplicateMatch {
+                drawer_id: r.drawer_id,
+                content: r.content,
+                similarity: r.score,
+                wing: r.wing_name,
+                room: r.room_name,
+            }))
+    }
+
+    /// Add a drawer only if no existing drawer exceeds the similarity threshold.
+    ///
+    /// Returns `(drawer_id, true)` if a new drawer was created, or
+    /// `(existing_id, false)` if a duplicate was found.
+    pub fn add_drawer_if_unique(
+        &mut self,
+        content: &str,
+        wing: &str,
+        room: &str,
+        source: DrawerSource,
+        threshold: f32,
+    ) -> Result<(String, bool)> {
+        if let Some(dup) = self.check_duplicate(content, threshold)? {
+            return Ok((dup.drawer_id, false));
+        }
+        let id = self.add_drawer(content, wing, room, source)?;
+        Ok((id, true))
     }
 
     // -- Status -------------------------------------------------------------
@@ -1191,7 +1318,7 @@ mod tests {
             )
             .unwrap();
 
-        let results = palace.search_mut("blue sky light", 5).unwrap();
+        let results = palace.search("blue sky light", 5).unwrap();
         assert!(!results.is_empty());
         assert_eq!(results[0].wing_name, "Science");
     }
@@ -1209,14 +1336,14 @@ mod tests {
                 )
                 .unwrap();
         }
-        let results = palace.search_mut("memory topic", 3).unwrap();
+        let results = palace.search("memory topic", 3).unwrap();
         assert!(results.len() <= 3);
     }
 
     #[test]
     fn search_empty_palace() {
         let mut palace = make_palace();
-        let results = palace.search_mut("anything", 5).unwrap();
+        let results = palace.search("anything", 5).unwrap();
         assert!(results.is_empty());
     }
 
@@ -1693,7 +1820,7 @@ mod tests {
             .unwrap();
 
         // 2. Search
-        let results = palace.search_mut("force and motion", 5).unwrap();
+        let results = palace.search("force and motion", 5).unwrap();
         assert!(!results.is_empty());
 
         // 3. Navigate

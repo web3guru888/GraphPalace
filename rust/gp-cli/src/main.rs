@@ -39,6 +39,10 @@ struct Cli {
     #[arg(short, long, default_value = "graphpalace.toml")]
     config: String,
 
+    /// Suppress informational messages (e.g. tunnel build counts)
+    #[arg(short, long)]
+    quiet: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -217,6 +221,9 @@ enum RoomCommands {
         /// Hall type: facts, events, discoveries, preferences, advice
         #[arg(short = 't', long, default_value = "facts")]
         hall_type: String,
+        /// Description
+        #[arg(short, long)]
+        description: Option<String>,
     },
 }
 
@@ -426,7 +433,7 @@ fn load_palace_config(db_path: &str, config_file: &str) -> GraphPalaceConfig {
 
 
 
-fn load_or_create_palace(db_path: &str, config_file: &str) -> Result<GraphPalace> {
+fn load_or_create_palace(db_path: &str, config_file: &str, quiet: bool) -> Result<GraphPalace> {
     let config = load_palace_config(db_path, config_file);
     let storage = InMemoryBackend::new();
 
@@ -455,7 +462,7 @@ fn load_or_create_palace(db_path: &str, config_file: &str) -> Result<GraphPalace
 
         // Auto-build tunnels between rooms in different wings for cross-wing navigation
         let tunnel_count = palace.build_tunnels(0.3).unwrap_or(0);
-        if tunnel_count > 0 {
+        if tunnel_count > 0 && !quiet {
             eprintln!("Built {tunnel_count} tunnel(s) for cross-wing navigation");
         }
     }
@@ -577,7 +584,7 @@ impl ToolHandler for PalaceToolHandler {
                     .and_then(|a| a.get("k"))
                     .and_then(|v| v.as_u64())
                     .unwrap_or(10) as usize;
-                match self.palace.search_mut(query, k) {
+                match self.palace.search(query, k) {
                     Ok(results) => {
                         let results_json: Vec<Value> = results.iter().map(|r| serde_json::json!({
                             "drawer_id": r.drawer_id,
@@ -703,9 +710,10 @@ impl ToolHandler for PalaceToolHandler {
                 let wing_id = arguments.and_then(|a| a.get("wing_id")).and_then(|v| v.as_str());
                 let name = arguments.and_then(|a| a.get("name")).and_then(|v| v.as_str());
                 let htype = arguments.and_then(|a| a.get("hall_type")).and_then(|v| v.as_str()).unwrap_or("facts");
+                let desc = arguments.and_then(|a| a.get("description")).and_then(|v| v.as_str());
                 match (wing_id, name) {
                     (Some(wid), Some(n)) => {
-                        match self.palace.add_room(wid, n, parse_hall_type(htype)) {
+                        match self.palace.add_room_with_description(wid, n, parse_hall_type(htype), desc) {
                             Ok(id) => {
                                 self.auto_save();
                                 ToolCallResult::text(serde_json::json!({
@@ -727,7 +735,7 @@ impl ToolHandler for PalaceToolHandler {
                     .unwrap_or(0.85) as f32;
                 match content {
                     Some(c) => {
-                        match self.palace.search_mut(c, 5) {
+                        match self.palace.search(c, 5) {
                             Ok(results) => {
                                 let dupes: Vec<Value> = results.iter()
                                     .filter(|r| r.score >= threshold)
@@ -757,9 +765,31 @@ impl ToolHandler for PalaceToolHandler {
                     .and_then(|a| a.get("confidence"))
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.5);
+                let valid_from_str = arguments.and_then(|a| a.get("valid_from")).and_then(|v| v.as_str());
+                let valid_to_str = arguments.and_then(|a| a.get("valid_to")).and_then(|v| v.as_str());
+                let statement_type_str = arguments.and_then(|a| a.get("statement_type")).and_then(|v| v.as_str());
+                let has_temporal = valid_from_str.is_some() || valid_to_str.is_some() || statement_type_str.is_some();
                 match (subject, predicate, object) {
                     (Some(s), Some(p), Some(o)) => {
-                        match self.palace.kg_add_with_confidence(s, p, o, confidence) {
+                        let result = if has_temporal {
+                            use gp_core::types::StatementType;
+                            let st = match statement_type_str.unwrap_or("fact") {
+                                "observation" => StatementType::Observation,
+                                "inference" => StatementType::Inference,
+                                "hypothesis" => StatementType::Hypothesis,
+                                _ => StatementType::Fact,
+                            };
+                            let vf = valid_from_str
+                                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                                .map(|dt| dt.with_timezone(&chrono::Utc));
+                            let vt = valid_to_str
+                                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                                .map(|dt| dt.with_timezone(&chrono::Utc));
+                            self.palace.kg_add_temporal(s, p, o, confidence, vf, vt, st)
+                        } else {
+                            self.palace.kg_add_with_confidence(s, p, o, confidence)
+                        };
+                        match result {
                             Ok(id) => {
                                 self.auto_save();
                                 ToolCallResult::text(serde_json::json!({
@@ -787,6 +817,11 @@ impl ToolHandler for PalaceToolHandler {
                                     "predicate": r.predicate,
                                     "object": r.object,
                                     "confidence": r.confidence,
+                                    "valid_from": r.valid_from,
+                                    "valid_to": r.valid_to,
+                                    "observed_at": r.observed_at,
+                                    "invalidated_at": r.invalidated_at,
+                                    "statement_type": r.statement_type.to_string(),
                                 })).collect();
                                 ToolCallResult::text(serde_json::json!({
                                     "entity": e,
@@ -855,6 +890,11 @@ impl ToolHandler for PalaceToolHandler {
                                     "predicate": r.predicate,
                                     "object": r.object,
                                     "confidence": r.confidence,
+                                    "valid_from": r.valid_from,
+                                    "valid_to": r.valid_to,
+                                    "observed_at": r.observed_at,
+                                    "invalidated_at": r.invalidated_at,
+                                    "statement_type": r.statement_type.to_string(),
                                 })).collect();
                                 ToolCallResult::text(serde_json::json!({
                                     "entity": e,
@@ -877,6 +917,7 @@ impl ToolHandler for PalaceToolHandler {
                                     "subject": r.subject,
                                     "predicate": r.predicate,
                                     "object": r.object,
+                                    "statement_type": r.statement_type.to_string(),
                                 })).collect();
                                 ToolCallResult::text(serde_json::json!({
                                     "start": s,
@@ -1078,7 +1119,7 @@ fn main() -> Result<()> {
             }
         }
         Commands::AddDrawer { content, wing, room, source } => {
-            let mut palace = load_or_create_palace(&cli.db, &cli.config)?;
+            let mut palace = load_or_create_palace(&cli.db, &cli.config, cli.quiet)?;
             let source = parse_drawer_source(&source);
             let id = palace.add_drawer(&content, &wing, &room, source)?;
             save_palace(&palace, &cli.db)?;
@@ -1088,10 +1129,10 @@ fn main() -> Result<()> {
             println!("  Content: {}...", truncate_str(&content, 80));
         }
         Commands::Search { query, wing, room, k } => {
-            let mut palace = load_or_create_palace(&cli.db, &cli.config)?;
+            let mut palace = load_or_create_palace(&cli.db, &cli.config, cli.quiet)?;
             // Fetch more results if filtering, so we still get k after filter
             let fetch_k = if wing.is_some() || room.is_some() { k * 5 } else { k };
-            let mut results = palace.search_mut(&query, fetch_k)?;
+            let mut results = palace.search(&query, fetch_k)?;
             // Apply wing/room filters
             if let Some(ref w) = wing {
                 results.retain(|r| r.wing_name == *w);
@@ -1113,7 +1154,7 @@ fn main() -> Result<()> {
             }
         }
         Commands::Navigate { from, to, context } => {
-            let palace = load_or_create_palace(&cli.db, &cli.config)?;
+            let palace = load_or_create_palace(&cli.db, &cli.config, cli.quiet)?;
             match palace.navigate(&from, &to, Some(&context)) {
                 Ok(path) => {
                     println!("Path found: {} → {}", from, to);
@@ -1129,7 +1170,7 @@ fn main() -> Result<()> {
             }
         }
         Commands::Status { verbose } => {
-            let palace = load_or_create_palace(&cli.db, &cli.config)?;
+            let palace = load_or_create_palace(&cli.db, &cli.config, cli.quiet)?;
             let status = palace.status()?;
             println!("Palace: {}", status.name);
             println!("  Wings:         {}", status.wing_count);
@@ -1149,7 +1190,7 @@ fn main() -> Result<()> {
             if format == "cypher" {
                 anyhow::bail!("Cypher format is not yet supported. Use JSON (default).");
             }
-            let palace = load_or_create_palace(&cli.db, &cli.config)?;
+            let palace = load_or_create_palace(&cli.db, &cli.config, cli.quiet)?;
             let export = palace.export()?;
             let json = export.to_json_pretty()?;
             std::fs::write(&output, &json)?;
@@ -1159,7 +1200,7 @@ fn main() -> Result<()> {
             if format == "cypher" {
                 anyhow::bail!("Cypher format is not yet supported. Use JSON (default).");
             }
-            let palace = load_or_create_palace(&cli.db, &cli.config)?;
+            let palace = load_or_create_palace(&cli.db, &cli.config, cli.quiet)?;
             let json = std::fs::read_to_string(&input)
                 .with_context(|| format!("reading {input}"))?;
             let export = PalaceExport::from_json(&json)?;
@@ -1177,7 +1218,7 @@ fn main() -> Result<()> {
         }
         Commands::Wing { command } => match command {
             WingCommands::List => {
-                let palace = load_or_create_palace(&cli.db, &cli.config)?;
+                let palace = load_or_create_palace(&cli.db, &cli.config, cli.quiet)?;
                 let wings = palace.storage().list_wings();
                 if wings.is_empty() {
                     println!("No wings found. Use 'graphpalace wing add' to create one.");
@@ -1191,7 +1232,7 @@ fn main() -> Result<()> {
                 }
             }
             WingCommands::Add { name, wing_type, description } => {
-                let mut palace = load_or_create_palace(&cli.db, &cli.config)?;
+                let mut palace = load_or_create_palace(&cli.db, &cli.config, cli.quiet)?;
                 let wt = parse_wing_type(&wing_type);
                 let desc = description.as_deref().unwrap_or(&name);
                 let id = palace.add_wing(&name, wt, desc)?;
@@ -1201,7 +1242,7 @@ fn main() -> Result<()> {
         },
         Commands::Room { command } => match command {
             RoomCommands::List { wing } => {
-                let palace = load_or_create_palace(&cli.db, &cli.config)?;
+                let palace = load_or_create_palace(&cli.db, &cli.config, cli.quiet)?;
                 // Find wing by name
                 let wing_obj = palace.storage().find_wing_by_name(&wing);
                 match wing_obj {
@@ -1221,14 +1262,19 @@ fn main() -> Result<()> {
                     None => println!("Wing '{wing}' not found"),
                 }
             }
-            RoomCommands::Add { wing, name, hall_type } => {
-                let mut palace = load_or_create_palace(&cli.db, &cli.config)?;
+            RoomCommands::Add { wing, name, hall_type, description } => {
+                let mut palace = load_or_create_palace(&cli.db, &cli.config, cli.quiet)?;
                 let wing_obj = palace.storage().find_wing_by_name(&wing);
                 match wing_obj {
                     Some(w) => {
                         let ht = parse_hall_type(&hall_type);
                         let wing_id = w.id.clone();
-                        let id = palace.add_room(&wing_id, &name, ht)?;
+                        let id = palace.add_room_with_description(
+                            &wing_id,
+                            &name,
+                            ht,
+                            description.as_deref(),
+                        )?;
                         save_palace(&palace, &cli.db)?;
                         println!("Added room '{name}' to wing '{wing}' → {id}");
                     }
@@ -1238,14 +1284,14 @@ fn main() -> Result<()> {
         },
         Commands::Kg { command } => match command {
             KgCommands::Add { subject, predicate, object, confidence } => {
-                let mut palace = load_or_create_palace(&cli.db, &cli.config)?;
+                let mut palace = load_or_create_palace(&cli.db, &cli.config, cli.quiet)?;
                 let id = palace.kg_add_with_confidence(&subject, &predicate, &object, confidence)?;
                 save_palace(&palace, &cli.db)?;
                 println!("Added triple: {subject} --{predicate}--> {object}");
                 println!("  ID: {id}");
             }
             KgCommands::Query { entity } => {
-                let palace = load_or_create_palace(&cli.db, &cli.config)?;
+                let palace = load_or_create_palace(&cli.db, &cli.config, cli.quiet)?;
                 let rels = palace.kg_query(&entity)?;
                 if rels.is_empty() {
                     println!("No relationships found for '{entity}'");
@@ -1258,7 +1304,7 @@ fn main() -> Result<()> {
                 }
             }
             KgCommands::Timeline { entity } => {
-                let palace = load_or_create_palace(&cli.db, &cli.config)?;
+                let palace = load_or_create_palace(&cli.db, &cli.config, cli.quiet)?;
                 let rels = palace.kg_query(&entity)?;
                 if rels.is_empty() {
                     println!("No timeline entries for '{entity}'");
@@ -1270,7 +1316,7 @@ fn main() -> Result<()> {
                 }
             }
             KgCommands::Contradictions { entity } => {
-                let palace = load_or_create_palace(&cli.db, &cli.config)?;
+                let palace = load_or_create_palace(&cli.db, &cli.config, cli.quiet)?;
                 let pairs = palace.kg_contradictions(&entity)?;
                 if pairs.is_empty() {
                     println!("No contradictions found for '{entity}'");
@@ -1286,7 +1332,7 @@ fn main() -> Result<()> {
         },
         Commands::Pheromone { command } => match command {
             PheromoneCommands::Status { node_id } => {
-                let palace = load_or_create_palace(&cli.db, &cli.config)?;
+                let palace = load_or_create_palace(&cli.db, &cli.config, cli.quiet)?;
                 let d = palace.storage().read_data();
                 let pheromones = d.wings.get(&node_id).map(|w| &w.pheromones)
                     .or_else(|| d.rooms.get(&node_id).map(|r| &r.pheromones))
@@ -1303,7 +1349,7 @@ fn main() -> Result<()> {
                 }
             }
             PheromoneCommands::Hot { k } => {
-                let palace = load_or_create_palace(&cli.db, &cli.config)?;
+                let palace = load_or_create_palace(&cli.db, &cli.config, cli.quiet)?;
                 let paths = palace.hot_paths(k)?;
                 if paths.is_empty() {
                     println!("No hot paths found");
@@ -1315,7 +1361,7 @@ fn main() -> Result<()> {
                 }
             }
             PheromoneCommands::Cold { k } => {
-                let palace = load_or_create_palace(&cli.db, &cli.config)?;
+                let palace = load_or_create_palace(&cli.db, &cli.config, cli.quiet)?;
                 let spots = palace.cold_spots(k)?;
                 if spots.is_empty() {
                     println!("No cold spots found");
@@ -1327,7 +1373,7 @@ fn main() -> Result<()> {
                 }
             }
             PheromoneCommands::Decay => {
-                let mut palace = load_or_create_palace(&cli.db, &cli.config)?;
+                let mut palace = load_or_create_palace(&cli.db, &cli.config, cli.quiet)?;
                 palace.decay_pheromones()?;
                 save_palace(&palace, &cli.db)?;
                 println!("Pheromone decay cycle applied");
@@ -1335,7 +1381,7 @@ fn main() -> Result<()> {
         },
         Commands::Agent { command } => match command {
             AgentCommands::List => {
-                let palace = load_or_create_palace(&cli.db, &cli.config)?;
+                let palace = load_or_create_palace(&cli.db, &cli.config, cli.quiet)?;
                 let agents = palace.list_palace_agents();
                 if agents.is_empty() {
                     println!("No agents. Create one with 'graphpalace agent create <name> <domain>'");
@@ -1348,7 +1394,7 @@ fn main() -> Result<()> {
                 }
             }
             AgentCommands::Diary { agent_id, last_n } => {
-                let palace = load_or_create_palace(&cli.db, &cli.config)?;
+                let palace = load_or_create_palace(&cli.db, &cli.config, cli.quiet)?;
                 match palace.diary_read(&agent_id, Some(last_n)) {
                     Ok(entries) => {
                         if entries.is_empty() {
@@ -1368,7 +1414,7 @@ fn main() -> Result<()> {
             if port != 3000 || bind != "127.0.0.1" {
                 eprintln!("Warning: --port and --bind are reserved for future HTTP transport. Currently using stdio.");
             }
-            let palace = load_or_create_palace(&cli.db, &cli.config)?;
+            let palace = load_or_create_palace(&cli.db, &cli.config, cli.quiet)?;
             let handler = PalaceToolHandler { palace, db_path: cli.db.clone() };
             let mut server = McpServer::with_handler(Box::new(handler));
 

@@ -262,7 +262,7 @@ ORDER BY cnt DESC
 | `add_drawer` | `content`, `wing`, `room`, `source?` | New drawer ID (auto-embedded) | Storing a new memory (always `check_duplicate` first!) |
 | `delete_drawer` | `drawer_id` | Confirmation | Removing incorrect or duplicate content |
 | `add_wing` | `name`, `type`, `description` | New wing ID | Creating a new domain/project/person area |
-| `add_room` | `wing_id`, `name`, `hall_type` | New room ID | Adding a subject area within a wing |
+| `add_room` | `wing_id`, `name`, `hall_type`, `description?` | New room ID | Adding a subject area within a wing |
 | `check_duplicate` | `content`, `threshold?` | Similar existing drawers | **Call before `add_drawer`** — prevent duplicates |
 
 ### Knowledge Graph
@@ -384,6 +384,63 @@ ORDER BY cnt DESC
 4. add_room(wing_id=new_wing_id, name="hardware", hall_type="facts")
 5. (Add drawers with content to each room)
 ```
+
+---
+
+## CLI Quick Reference
+
+The `graphpalace` CLI mirrors the MCP tools above. Global flags go **before** the subcommand:
+
+```
+graphpalace -d <palace_dir> [-c config.toml] [-q] <command>
+```
+
+| Flag | Short | Default | Purpose |
+|------|:-----:|---------|---------|
+| `--db` | `-d` | `./palace` | Path to palace database directory |
+| `--config` | `-c` | `graphpalace.toml` | Config file path |
+| `--quiet` | `-q` | off | Suppress informational messages (e.g. tunnel build counts) |
+
+### Common commands
+
+```bash
+# Initialize a new palace
+graphpalace -d .palace init --name "My Palace"
+
+# Wing operations
+graphpalace -d .palace wing list
+graphpalace -d .palace wing add <name> -t domain -d "description"
+#   -t/--wing-type: person | project | domain | topic (default: topic)
+#   -d/--description: optional wing description
+
+# Room operations
+graphpalace -d .palace room list <wing>
+graphpalace -d .palace room add <wing> <name> -t facts -d "description"
+#   -t/--hall-type: facts | events | discoveries | preferences | advice (default: facts)
+#   -d/--description: optional room description
+
+# Add a memory (drawer)
+graphpalace -d .palace add-drawer -c "content" -w wing -r room -s conversation
+#   -s/--source: conversation | file | api | agent
+
+# Semantic search
+graphpalace -d .palace search "query" -k 5
+
+# Knowledge graph
+graphpalace -d .palace kg add "subject" "predicate" "object" --confidence 0.8
+graphpalace -d .palace kg query "entity"
+graphpalace -d .palace kg timeline "entity"
+
+# Navigation & structure
+graphpalace -d .palace navigate <from_id> <to_id>
+graphpalace -d .palace status --verbose
+graphpalace -d .palace export -o backup.json
+
+# Start MCP server (stdin/stdout JSON-RPC)
+graphpalace -d .palace serve
+```
+
+> **Note:** The MCP tools table above documents the **server-side tool interface** (used via `serve`). The CLI subcommands listed here provide equivalent functionality for direct terminal use.
 
 ---
 

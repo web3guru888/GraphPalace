@@ -1,6 +1,7 @@
 //! Palace status, hot-path, and cold-spot types.
 
 use chrono::{DateTime, Utc};
+use gp_core::types::StatementType;
 use serde::{Deserialize, Serialize};
 
 /// Snapshot of the palace's current state.
@@ -59,6 +60,21 @@ pub struct KgRelationship {
     pub object: String,
     /// Confidence score in [0, 1].
     pub confidence: f64,
+    /// Start of the assertion validity window.
+    #[serde(default)]
+    pub valid_from: Option<String>,
+    /// End of the assertion validity window.
+    #[serde(default)]
+    pub valid_to: Option<String>,
+    /// When the triple was first recorded.
+    #[serde(default)]
+    pub observed_at: Option<String>,
+    /// When the triple was retracted/invalidated in the system.
+    #[serde(default)]
+    pub invalidated_at: Option<String>,
+    /// Classification: fact, observation, inference, hypothesis.
+    #[serde(default)]
+    pub statement_type: StatementType,
 }
 
 #[cfg(test)]
@@ -134,10 +150,48 @@ mod tests {
             predicate: "discovered".into(),
             object: "Relativity".into(),
             confidence: 0.99,
+            valid_from: None,
+            valid_to: None,
+            observed_at: Some("2026-01-01T00:00:00+00:00".into()),
+            invalidated_at: None,
+            statement_type: StatementType::Fact,
         };
         let json = serde_json::to_string(&rel).unwrap();
         let deser: KgRelationship = serde_json::from_str(&json).unwrap();
         assert_eq!(deser.predicate, "discovered");
         assert!((deser.confidence - 0.99).abs() < 1e-10);
+        assert_eq!(deser.statement_type, StatementType::Fact);
+        assert!(deser.invalidated_at.is_none());
+    }
+
+    #[test]
+    fn kg_relationship_backward_compat_deserialization() {
+        // Old JSON without temporal fields should still deserialize (serde defaults).
+        let json = r#"{"subject":"A","predicate":"knows","object":"B","confidence":0.5}"#;
+        let deser: KgRelationship = serde_json::from_str(json).unwrap();
+        assert_eq!(deser.subject, "A");
+        assert_eq!(deser.statement_type, StatementType::Fact);
+        assert!(deser.valid_from.is_none());
+        assert!(deser.invalidated_at.is_none());
+    }
+
+    #[test]
+    fn kg_relationship_hypothesis_round_trip() {
+        let rel = KgRelationship {
+            subject: "X".into(),
+            predicate: "causes".into(),
+            object: "Y".into(),
+            confidence: 0.3,
+            valid_from: Some("2026-01-01T00:00:00+00:00".into()),
+            valid_to: Some("2026-12-31T23:59:59+00:00".into()),
+            observed_at: Some("2026-04-14T00:00:00+00:00".into()),
+            invalidated_at: None,
+            statement_type: StatementType::Hypothesis,
+        };
+        let json = serde_json::to_string(&rel).unwrap();
+        assert!(json.contains("hypothesis"));
+        let deser: KgRelationship = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.statement_type, StatementType::Hypothesis);
+        assert!(deser.valid_from.is_some());
     }
 }

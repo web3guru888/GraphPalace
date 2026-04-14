@@ -15,4 +15,4 @@ pub mod search;
 pub use export::{ImportMode, ImportStats, PalaceExport};
 pub use lifecycle::{ColdSpot, HotPath, KgRelationship, PalaceStatus};
 pub use palace::GraphPalace;
-pub use search::SearchResult;
+pub use search::{DuplicateMatch, SearchResult};
