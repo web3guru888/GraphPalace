@@ -8,10 +8,26 @@
 ![Rust](https://img.shields.io/badge/rust-13_crates-orange)
 ![LOC](https://img.shields.io/badge/LOC-24%2C070-blue)
 [![Paper](https://img.shields.io/badge/paper-PDF-red)](paper/graphpalace-paper.pdf)
+[![ATLAS](https://img.shields.io/badge/powers-ATLAS_v4.0.8-00d4ff.svg)](https://github.com/web3guru888/ATLAS)
+[![Observatory](https://img.shields.io/badge/demo-Observatory-ff6b6b.svg)](https://huggingface.co/spaces/openhubresearch/ATLAS)
+[![HF Model](https://img.shields.io/badge/🤗_Model-OLMo--3--7B--Think-yellow.svg)](https://huggingface.co/openhubresearch/ATLAS-OLMo-3-7B-Think-v4)
 
 GraphPalace is an embedded graph database that makes the **memory palace metaphor computationally real**. Built as a Rust extension to [Kùzu](https://github.com/kuzudb/kuzu) — a property graph database with Cypher, native HNSW vector search, full-text search, and WASM bindings — it adds stigmergic navigation, spatial hierarchy, semantic A\* pathfinding, and Active Inference agents. The result: a **fully local, private, self-optimizing AI memory system** that runs in a browser tab, on a server, or on an edge device. No cloud. No API keys. No data exfiltration.
 
 > **Status**: All 10 phases complete — 13 Rust crates, 694 tests, 24,070 LOC, zero failures. Production-ready with HNSW vector index, full CLI, MCP auth, and crash-safe persistence. **[Read the paper →](paper/graphpalace-paper.pdf)**
+
+---
+
+## 🌐 Part of the ATLAS Ecosystem
+
+GraphPalace is the **memory engine** powering [**ATLAS**](https://atlasagi.org) — an AGI training framework that fuses stigmergic memory with frontier language models. Every knowledge node, pheromone trail, and Active Inference agent in ATLAS runs on GraphPalace.
+
+| | |
+|---|---|
+| 🏔 **ATLAS Framework** | [github.com/web3guru888/ATLAS](https://github.com/web3guru888/ATLAS) — AGI training with stigmergic dynamics, Champagnat n-morphic competition, and GPU inference |
+| 🔭 **Observatory Demo** | [huggingface.co/spaces/openhubresearch/ATLAS](https://huggingface.co/spaces/openhubresearch/ATLAS) — Interactive 3D palace visualization, live inference, Arena simulations |
+| 🤗 **HuggingFace Model** | [openhubresearch/ATLAS-OLMo-3-7B-Think-v4](https://huggingface.co/openhubresearch/ATLAS-OLMo-3-7B-Think-v4) — 7B parameter model with thinking capabilities |
+| 🔬 **OpenHub Research** | [openhubresearch.org](https://openhubresearch.org) — Open science initiative for AGI safety and stigmergic computing |
 
 ---
 
@@ -499,6 +515,16 @@ GraphPalace stands on the shoulders of:
 5. Submit a pull request
 
 Please keep PRs focused — one feature or fix per PR.
+
+---
+
+## See Also
+
+- **[ATLAS](https://github.com/web3guru888/ATLAS)** — AGI training framework powered by GraphPalace · [Website](https://atlasagi.org)
+- **[ATLAS Observatory](https://huggingface.co/spaces/openhubresearch/ATLAS)** — Interactive demo with 3D palace visualization, live GPU inference, and Arena simulations
+- **[ATLAS-OLMo-3-7B-Think-v4](https://huggingface.co/openhubresearch/ATLAS-OLMo-3-7B-Think-v4)** — HuggingFace model with thinking capabilities
+- **[OpenHub Research](https://openhubresearch.org)** — Open science for AGI safety and stigmergic computing
+- **[FetchAGI](https://fetchagi.org)** — Multi-agent orchestration layer for GraphPalace + ASI cognitive modules
 
 ---
 
