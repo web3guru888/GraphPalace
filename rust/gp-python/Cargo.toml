@@ -21,3 +21,4 @@ gp-embeddings = { path = "../gp-embeddings", features = ["tfidf"] }
 gp-pathfinding = { path = "../gp-pathfinding" }
 serde.workspace = true
 serde_json.workspace = true
+chrono = { workspace = true }

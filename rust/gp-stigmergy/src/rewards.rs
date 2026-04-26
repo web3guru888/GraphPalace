@@ -69,6 +69,95 @@ pub fn deposit_exploration(pheromones: &mut NodePheromones) {
     pheromones.exploration += EXPLORATION_INCREMENT;
 }
 
+/// Clamp a value to a ceiling. Returns the ceiling if value exceeds it.
+#[inline]
+pub fn clamp_to_ceiling(value: f64, ceiling: f64) -> f64 {
+    if value > ceiling { ceiling } else { value }
+}
+
+/// Clamp edge pheromones to their saturation ceilings.
+pub fn apply_edge_saturation(edge: &mut EdgePheromones, config: &gp_core::config::PheromoneConfig) {
+    edge.success = clamp_to_ceiling(edge.success, config.success_max);
+    edge.traversal = clamp_to_ceiling(edge.traversal, config.traversal_max);
+    edge.recency = clamp_to_ceiling(edge.recency, config.recency_max);
+}
+
+/// Clamp node pheromones to their saturation ceilings.
+pub fn apply_node_saturation(node: &mut NodePheromones, config: &gp_core::config::PheromoneConfig) {
+    node.exploitation = clamp_to_ceiling(node.exploitation, config.exploitation_max);
+    node.exploration = clamp_to_ceiling(node.exploration, config.exploration_max);
+}
+
+/// Deposit pheromones along a successful search path with saturation clamping.
+///
+/// Same as [`deposit_path_success`] but enforces τ_max ceilings from config.
+pub fn deposit_path_success_clamped(
+    edges: &mut [EdgePheromones],
+    nodes: &mut [NodePheromones],
+    base_reward: f64,
+    config: &gp_core::config::PheromoneConfig,
+) {
+    deposit_path_success(edges, nodes, base_reward);
+    for edge in edges.iter_mut() {
+        apply_edge_saturation(edge, config);
+    }
+    for node in nodes.iter_mut() {
+        apply_node_saturation(node, config);
+    }
+}
+
+/// Failure penalty as a fraction of the exploitation increment.
+pub const FAILURE_EXPLOITATION_FACTOR: f64 = 0.5;
+
+/// Deposit negative pheromones along a failed/dead-end path.
+///
+/// Mirror of [`deposit_path_success`] with subtraction instead of addition.
+/// - Each **edge** at position `i` gets: `success -= penalty × (1.0 - i/n)`
+/// - Each **node** gets: `exploitation -= EXPLOITATION_INCREMENT × 0.5`
+/// - All values are floored at 0.0 (pheromones cannot go negative).
+/// - Traversal and recency are NOT modified (they record factual usage).
+///
+/// # Arguments
+/// - `edges`: mutable slice of edge pheromones along the failed path
+/// - `nodes`: mutable slice of node pheromones along the failed path
+/// - `penalty`: base penalty amount (positive value; will be subtracted)
+pub fn deposit_path_failure(
+    edges: &mut [EdgePheromones],
+    nodes: &mut [NodePheromones],
+    penalty: f64,
+) {
+    let path_len = edges.len() as f64;
+
+    if path_len > 0.0 {
+        for (i, edge) in edges.iter_mut().enumerate() {
+            let position_weight = 1.0 - (i as f64 / path_len);
+            edge.success = (edge.success - penalty * position_weight).max(0.0);
+        }
+    }
+
+    for node in nodes.iter_mut() {
+        node.exploitation =
+            (node.exploitation - EXPLOITATION_INCREMENT * FAILURE_EXPLOITATION_FACTOR).max(0.0);
+    }
+}
+
+/// Deposit negative pheromones with saturation-aware clamping.
+pub fn deposit_path_failure_clamped(
+    edges: &mut [EdgePheromones],
+    nodes: &mut [NodePheromones],
+    penalty: f64,
+    config: &gp_core::config::PheromoneConfig,
+) {
+    deposit_path_failure(edges, nodes, penalty);
+    // Floor is already enforced in deposit_path_failure, but apply ceiling too
+    for edge in edges.iter_mut() {
+        apply_edge_saturation(edge, config);
+    }
+    for node in nodes.iter_mut() {
+        apply_node_saturation(node, config);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,5 +313,107 @@ mod tests {
         deposit_exploration(&mut p);
         assert!((p.exploitation - 0.7).abs() < 1e-12);
         assert!((p.exploration - EXPLORATION_INCREMENT).abs() < 1e-12);
+    }
+
+    // ─── Saturation ceiling (τ_max) ──────────────────────────────────────
+
+    #[test]
+    fn test_clamp_to_ceiling() {
+        assert_eq!(clamp_to_ceiling(3.0, 5.0), 3.0);
+        assert_eq!(clamp_to_ceiling(7.0, 5.0), 5.0);
+        assert_eq!(clamp_to_ceiling(5.0, 5.0), 5.0);
+        assert_eq!(clamp_to_ceiling(0.0, 5.0), 0.0);
+    }
+
+    #[test]
+    fn test_apply_edge_saturation() {
+        let config = gp_core::config::PheromoneConfig::default();
+        let mut edge = EdgePheromones { success: 10.0, traversal: 5.0, recency: 3.0 };
+        apply_edge_saturation(&mut edge, &config);
+        assert_eq!(edge.success, 5.0);   // clamped from 10.0
+        assert_eq!(edge.traversal, 2.0); // clamped from 5.0
+        assert_eq!(edge.recency, 1.0);   // clamped from 3.0
+    }
+
+    #[test]
+    fn test_apply_node_saturation() {
+        let config = gp_core::config::PheromoneConfig::default();
+        let mut node = NodePheromones { exploitation: 8.0, exploration: 6.0 };
+        apply_node_saturation(&mut node, &config);
+        assert_eq!(node.exploitation, 5.0); // clamped from 8.0
+        assert_eq!(node.exploration, 3.0);  // clamped from 6.0
+    }
+
+    #[test]
+    fn test_deposit_path_success_clamped() {
+        let config = gp_core::config::PheromoneConfig::default();
+        // Start with values near ceiling
+        let mut edges = vec![EdgePheromones { success: 4.5, traversal: 1.9, recency: 0.5 }];
+        let mut nodes = vec![NodePheromones { exploitation: 4.9, exploration: 0.0 }];
+        deposit_path_success_clamped(&mut edges, &mut nodes, 2.0, &config);
+        // success would be 4.5 + 2.0 = 6.5, clamped to 5.0
+        assert!((edges[0].success - 5.0).abs() < 1e-12);
+        // exploitation would be 4.9 + 0.2 = 5.1, clamped to 5.0
+        assert!((nodes[0].exploitation - 5.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_saturation_below_ceiling_unchanged() {
+        let config = gp_core::config::PheromoneConfig::default();
+        let mut edges = vec![EdgePheromones { success: 0.5, traversal: 0.1, recency: 0.1 }];
+        let mut nodes = vec![NodePheromones { exploitation: 0.1, exploration: 0.0 }];
+        deposit_path_success_clamped(&mut edges, &mut nodes, 1.0, &config);
+        // All below ceiling, should be same as unclamped
+        assert!((edges[0].success - 1.5).abs() < 1e-12);
+    }
+
+    // ─── Failure deposit ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_deposit_path_failure_single_edge() {
+        let mut edges = vec![EdgePheromones { success: 1.0, traversal: 0.5, recency: 0.3 }];
+        let mut nodes = vec![NodePheromones { exploitation: 1.0, exploration: 0.5 }];
+        deposit_path_failure(&mut edges, &mut nodes, 0.5);
+        // success: 1.0 - 0.5 × 1.0 = 0.5
+        assert!((edges[0].success - 0.5).abs() < 1e-12);
+        // traversal unchanged
+        assert!((edges[0].traversal - 0.5).abs() < 1e-12);
+        // recency unchanged
+        assert!((edges[0].recency - 0.3).abs() < 1e-12);
+        // exploitation: 1.0 - 0.2 × 0.5 = 0.9
+        assert!((nodes[0].exploitation - 0.9).abs() < 1e-12);
+        // exploration unchanged
+        assert!((nodes[0].exploration - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_deposit_path_failure_floors_at_zero() {
+        let mut edges = vec![EdgePheromones { success: 0.1, traversal: 0.5, recency: 0.3 }];
+        let mut nodes = vec![NodePheromones { exploitation: 0.05, exploration: 0.5 }];
+        deposit_path_failure(&mut edges, &mut nodes, 5.0);
+        assert_eq!(edges[0].success, 0.0);
+        assert_eq!(nodes[0].exploitation, 0.0);
+    }
+
+    #[test]
+    fn test_deposit_path_failure_position_weighting() {
+        let mut edges = vec![
+            EdgePheromones { success: 2.0, ..EdgePheromones::default() },
+            EdgePheromones { success: 2.0, ..EdgePheromones::default() },
+        ];
+        let mut nodes = vec![NodePheromones::default(); 3];
+        deposit_path_failure(&mut edges, &mut nodes, 1.0);
+        // Edge 0: 2.0 - 1.0 × (1 - 0/2) = 2.0 - 1.0 = 1.0
+        assert!((edges[0].success - 1.0).abs() < 1e-12);
+        // Edge 1: 2.0 - 1.0 × (1 - 1/2) = 2.0 - 0.5 = 1.5
+        assert!((edges[1].success - 1.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_deposit_path_failure_empty() {
+        let mut edges: Vec<EdgePheromones> = vec![];
+        let mut nodes: Vec<NodePheromones> = vec![];
+        deposit_path_failure(&mut edges, &mut nodes, 1.0);
+        // No panic
     }
 }

@@ -784,6 +784,23 @@ impl PyPalace {
         Ok(())
     }
 
+    /// Deposit negative pheromones along a failed path.
+    ///
+    /// Decreases success pheromone on edges and exploitation on nodes along
+    /// the path. Values are floored at zero.
+    ///
+    /// Args:
+    ///     path (list[str]): Ordered node IDs forming the failed path.
+    ///     penalty (float): Penalty magnitude. Defaults to ``1.0``.
+    #[pyo3(signature = (path, penalty=1.0))]
+    fn deposit_failure_pheromones(&self, path: Vec<String>, penalty: f64) -> PyResult<()> {
+        let guard = self.inner.lock().map_err(gp_err)?;
+        let palace = &guard.0;
+        palace.deposit_failure_pheromones(&path, penalty).map_err(gp_err)?;
+        if self.auto_save { save_palace(palace, &self.path)?; }
+        Ok(())
+    }
+
     /// Invalidate a knowledge-graph triple.
     ///
     /// Args:
@@ -1129,6 +1146,67 @@ impl PyPalace {
     fn save(&self) -> PyResult<()> {
         let guard = self.inner.lock().map_err(gp_err)?;
         save_palace(&guard.0, &self.path)
+    }
+
+    /// Get hyperstructure lifecycle metrics for a node.
+    ///
+    /// Returns a dict with node_id, label, node_type, ne_score, e_score,
+    /// ne_e_ratio, and phase classification.
+    ///
+    /// Args:
+    ///     node_id (str): The node ID to inspect.
+    ///
+    /// Returns:
+    ///     dict: Lifecycle metrics for the node.
+    fn hyperstructure_metrics(&self, node_id: &str) -> PyResult<PyObject> {
+        let guard = self.inner.lock().map_err(gp_err)?;
+        let palace = &guard.0;
+        let metrics = palace.hyperstructure_metrics(node_id).map_err(gp_err)?;
+        Python::with_gil(|py| {
+            let dict = pyo3::types::PyDict::new_bound(py);
+            dict.set_item("node_id", &metrics.node_id)?;
+            dict.set_item("label", &metrics.label)?;
+            dict.set_item("node_type", &metrics.node_type)?;
+            dict.set_item("ne_score", metrics.ne_score)?;
+            dict.set_item("e_score", metrics.e_score)?;
+            dict.set_item("ne_e_ratio", metrics.ne_e_ratio)?;
+            dict.set_item("phase", metrics.phase.to_string())?;
+            Ok(dict.into())
+        })
+    }
+
+    /// Get lifecycle summary for the entire palace.
+    ///
+    /// Returns a dict with ne_count, e_count, transitioning_count,
+    /// global_ne_e_ratio, and a list of per-node metrics.
+    ///
+    /// Returns:
+    ///     dict: Palace-wide lifecycle summary.
+    fn lifecycle_summary(&self) -> PyResult<PyObject> {
+        let guard = self.inner.lock().map_err(gp_err)?;
+        let palace = &guard.0;
+        let summary = palace.lifecycle_summary().map_err(gp_err)?;
+        Python::with_gil(|py| {
+            let dict = pyo3::types::PyDict::new_bound(py);
+            dict.set_item("ne_count", summary.ne_count)?;
+            dict.set_item("e_count", summary.e_count)?;
+            dict.set_item("transitioning_count", summary.transitioning_count)?;
+            dict.set_item("global_ne_e_ratio", summary.global_ne_e_ratio)?;
+            let nodes_list = pyo3::types::PyList::empty_bound(py);
+            for m in &summary.nodes {
+                let nd = pyo3::types::PyDict::new_bound(py);
+                nd.set_item("node_id", &m.node_id)?;
+                nd.set_item("label", &m.label)?;
+                nd.set_item("node_type", &m.node_type)?;
+                nd.set_item("ne_score", m.ne_score)?;
+                nd.set_item("e_score", m.e_score)?;
+                nd.set_item("ne_e_ratio", m.ne_e_ratio)?;
+                nd.set_item("phase", m.phase.to_string())?;
+                nodes_list.append(nd)?;
+            }
+            dict.set_item("nodes", nodes_list)?;
+            Ok(dict.into())
+        })
     }
 
     /// Return the number of drawers in the palace.

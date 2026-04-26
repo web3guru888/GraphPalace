@@ -20,6 +20,16 @@ pub struct PheromoneConfig {
     pub recency_decay: f64,
     /// How many cycles between bulk decay operations.
     pub decay_interval_cycles: usize,
+    /// Maximum exploitation pheromone value (τ_max). Default 5.0.
+    pub exploitation_max: f64,
+    /// Maximum exploration pheromone value (τ_max). Default 3.0.
+    pub exploration_max: f64,
+    /// Maximum success pheromone value (τ_max). Default 5.0.
+    pub success_max: f64,
+    /// Maximum traversal pheromone value (τ_max). Default 2.0.
+    pub traversal_max: f64,
+    /// Maximum recency pheromone value (τ_max). Default 1.0.
+    pub recency_max: f64,
 }
 
 impl Default for PheromoneConfig {
@@ -31,6 +41,12 @@ impl Default for PheromoneConfig {
             traversal_decay: 0.03,
             recency_decay: 0.10,
             decay_interval_cycles: 10,
+            // Saturation ceilings (τ_max)
+            exploitation_max: 5.0,
+            exploration_max: 3.0,
+            success_max: 5.0,
+            traversal_max: 2.0,
+            recency_max: 1.0,
         }
     }
 }

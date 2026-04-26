@@ -13,6 +13,9 @@ pub mod search;
 
 // Re-export primary public types.
 pub use export::{ImportMode, ImportStats, PalaceExport};
-pub use lifecycle::{ColdSpot, HotPath, KgRelationship, PalaceStatus};
+pub use lifecycle::{
+    ColdSpot, HotPath, HyperstructureMetrics, HyperstructurePhase,
+    KgRelationship, LifecycleSummary, PalaceStatus,
+};
 pub use palace::GraphPalace;
 pub use search::{DuplicateMatch, SearchResult};

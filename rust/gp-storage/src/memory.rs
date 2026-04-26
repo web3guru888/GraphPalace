@@ -948,6 +948,48 @@ impl InMemoryBackend {
         }
         total
     }
+
+    // -- Failure deposits ----------------------------------------------------
+
+    /// Deposit negative (failure) pheromones on an edge. Subtracts from success,
+    /// floors at 0.0. Does not modify traversal or recency.
+    pub fn deposit_failure_edge_pheromones(
+        &self,
+        from: &str,
+        to: &str,
+        penalty: f64,
+    ) {
+        let mut d = self.write_data();
+        let key = format!("{from}:{to}");
+        let rev_key = format!("{to}:{from}");
+        if let Some(ep) = d.edge_pheromones.get_mut(&key) {
+            ep.success = (ep.success - penalty).max(0.0);
+        } else if let Some(ep) = d.edge_pheromones.get_mut(&rev_key) {
+            ep.success = (ep.success - penalty).max(0.0);
+        }
+    }
+
+    /// Deposit negative (failure) pheromones on a node. Subtracts from exploitation,
+    /// floors at 0.0. Does not modify exploration.
+    pub fn deposit_failure_node_pheromones(
+        &self,
+        node_id: &str,
+        exploitation_penalty: f64,
+    ) {
+        let mut d = self.write_data();
+        // Check all node types
+        if let Some(w) = d.wings.get_mut(node_id) {
+            w.pheromones.exploitation = (w.pheromones.exploitation - exploitation_penalty).max(0.0);
+        } else if let Some(r) = d.rooms.get_mut(node_id) {
+            r.pheromones.exploitation = (r.pheromones.exploitation - exploitation_penalty).max(0.0);
+        } else if let Some(c) = d.closets.get_mut(node_id) {
+            c.pheromones.exploitation = (c.pheromones.exploitation - exploitation_penalty).max(0.0);
+        } else if let Some(dr) = d.drawers.get_mut(node_id) {
+            dr.pheromones.exploitation = (dr.pheromones.exploitation - exploitation_penalty).max(0.0);
+        } else if let Some(e) = d.entities.get_mut(node_id) {
+            e.pheromones.exploitation = (e.pheromones.exploitation - exploitation_penalty).max(0.0);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1038,6 +1080,169 @@ impl StorageBackend for InMemoryBackend {
         let mut d = self.write_data();
         d.schema_initialized = true;
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PalaceBackend implementation
+// ---------------------------------------------------------------------------
+
+impl crate::palace_backend::PalaceBackend for InMemoryBackend {
+    fn create_wing(&self, name: &str, wing_type: WingType, description: &str, embedding: Embedding) -> Result<String> {
+        InMemoryBackend::create_wing(self, name, wing_type, description, embedding)
+    }
+    fn get_wing(&self, id: &str) -> Result<Wing> {
+        InMemoryBackend::get_wing(self, id)
+    }
+    fn list_wings(&self) -> Vec<Wing> {
+        InMemoryBackend::list_wings(self)
+    }
+    fn find_wing_by_name(&self, name: &str) -> Option<Wing> {
+        InMemoryBackend::find_wing_by_name(self, name)
+    }
+    fn create_room(&self, wing_id: &str, name: &str, hall_type: HallType, description: &str, embedding: Embedding) -> Result<String> {
+        InMemoryBackend::create_room(self, wing_id, name, hall_type, description, embedding)
+    }
+    fn get_room(&self, id: &str) -> Result<Room> {
+        InMemoryBackend::get_room(self, id)
+    }
+    fn list_rooms(&self, wing_id: &str) -> Vec<Room> {
+        InMemoryBackend::list_rooms(self, wing_id)
+    }
+    fn create_closet(&self, room_id: &str, name: &str, summary: &str, embedding: Embedding) -> Result<String> {
+        InMemoryBackend::create_closet(self, room_id, name, summary, embedding)
+    }
+    fn get_closet(&self, id: &str) -> Result<Closet> {
+        InMemoryBackend::get_closet(self, id)
+    }
+    fn create_drawer(&self, closet_id: &str, content: &str, embedding: Embedding, source: DrawerSource, source_file: Option<&str>, importance: f64) -> Result<String> {
+        InMemoryBackend::create_drawer(self, closet_id, content, embedding, source, source_file, importance)
+    }
+    fn get_drawer(&self, id: &str) -> Result<Drawer> {
+        InMemoryBackend::get_drawer(self, id)
+    }
+    fn delete_drawer(&self, id: &str) -> Result<()> {
+        InMemoryBackend::delete_drawer(self, id)
+    }
+    fn search_drawers(&self, query_embedding: &Embedding, k: usize, threshold: f32) -> Vec<(Drawer, f32)> {
+        InMemoryBackend::search_drawers(self, query_embedding, k, threshold)
+    }
+    fn rebuild_hnsw_index(&self) {
+        InMemoryBackend::rebuild_hnsw_index(self)
+    }
+    fn create_entity(&self, name: &str, entity_type: EntityType, description: &str, embedding: Embedding) -> Result<String> {
+        InMemoryBackend::create_entity(self, name, entity_type, description, embedding)
+    }
+    fn get_entity(&self, id: &str) -> Result<Entity> {
+        InMemoryBackend::get_entity(self, id)
+    }
+    fn find_entity_by_name(&self, name: &str) -> Option<Entity> {
+        InMemoryBackend::find_entity_by_name(self, name)
+    }
+    fn add_relationship(&self, subject: &str, predicate: &str, object: &str, confidence: f64) -> Result<String> {
+        InMemoryBackend::add_relationship(self, subject, predicate, object, confidence)
+    }
+    fn add_relationship_temporal(&self, subject: &str, predicate: &str, object: &str, confidence: f64, valid_from: Option<String>, valid_to: Option<String>, statement_type: StatementType) -> Result<String> {
+        InMemoryBackend::add_relationship_temporal(self, subject, predicate, object, confidence, valid_from, valid_to, statement_type)
+    }
+    fn query_relationships(&self, entity: &str) -> Vec<Relationship> {
+        InMemoryBackend::query_relationships(self, entity)
+    }
+    fn invalidate_relationship(&self, subject: &str, predicate: &str, object: &str) -> bool {
+        InMemoryBackend::invalidate_relationship(self, subject, predicate, object)
+    }
+    fn find_contradictions(&self, entity: &str) -> Vec<(Relationship, Relationship)> {
+        InMemoryBackend::find_contradictions(self, entity)
+    }
+    fn deposit_edge_pheromones(&self, from: &str, to: &str, success: f64, traversal: f64, recency: f64) {
+        InMemoryBackend::deposit_edge_pheromones(self, from, to, success, traversal, recency)
+    }
+    fn deposit_node_pheromones(&self, node_id: &str, exploitation: f64, exploration: f64) {
+        InMemoryBackend::deposit_node_pheromones(self, node_id, exploitation, exploration)
+    }
+    fn deposit_failure_edge_pheromones(&self, from: &str, to: &str, penalty: f64) {
+        InMemoryBackend::deposit_failure_edge_pheromones(self, from, to, penalty)
+    }
+    fn deposit_failure_node_pheromones(&self, node_id: &str, exploitation_penalty: f64) {
+        InMemoryBackend::deposit_failure_node_pheromones(self, node_id, exploitation_penalty)
+    }
+    fn decay_all_pheromones(&self, config: &gp_core::config::PheromoneConfig) {
+        InMemoryBackend::decay_all_pheromones(self, config)
+    }
+    fn hot_paths(&self, k: usize) -> Vec<(String, String, f64)> {
+        InMemoryBackend::hot_paths(self, k)
+    }
+    fn cold_spots(&self, k: usize) -> Vec<(String, String, f64)> {
+        InMemoryBackend::cold_spots(self, k)
+    }
+    fn total_pheromone_mass(&self) -> f64 {
+        InMemoryBackend::total_pheromone_mass(self)
+    }
+    fn add_similarity_edge(&self, drawer_a: &str, drawer_b: &str, similarity: f32) {
+        InMemoryBackend::add_similarity_edge(self, drawer_a, drawer_b, similarity)
+    }
+    fn remove_similarity_edge(&self, drawer_a: &str, drawer_b: &str) -> bool {
+        InMemoryBackend::remove_similarity_edge(self, drawer_a, drawer_b)
+    }
+    fn add_similarity_edges(&self, threshold: f32) -> usize {
+        InMemoryBackend::add_similarity_edges(self, threshold)
+    }
+    fn similarity_edge_count(&self) -> usize {
+        InMemoryBackend::similarity_edge_count(self)
+    }
+    fn list_similarity_edges(&self) -> Vec<(String, String, f32)> {
+        InMemoryBackend::list_similarity_edges(self)
+    }
+    fn create_hall(&self, from_room_id: &str, to_room_id: &str, wing_id: &str) {
+        InMemoryBackend::create_hall(self, from_room_id, to_room_id, wing_id)
+    }
+    fn create_tunnel(&self, from_room_id: &str, to_room_id: &str) {
+        InMemoryBackend::create_tunnel(self, from_room_id, to_room_id)
+    }
+    fn list_halls(&self) -> Vec<(String, String, String)> {
+        InMemoryBackend::list_halls(self)
+    }
+    fn list_tunnels(&self) -> Vec<(String, String)> {
+        InMemoryBackend::list_tunnels(self)
+    }
+    fn create_agent(&self, name: &str, domain: &str, focus: &str, goal_embedding: Embedding, temperature: f64) -> Result<String> {
+        InMemoryBackend::create_agent(self, name, domain, focus, goal_embedding, temperature)
+    }
+    fn get_agent(&self, id: &str) -> Result<Agent> {
+        InMemoryBackend::get_agent(self, id)
+    }
+    fn list_agents(&self) -> Vec<Agent> {
+        InMemoryBackend::list_agents(self)
+    }
+    fn find_agent_by_name(&self, name: &str) -> Option<Agent> {
+        InMemoryBackend::find_agent_by_name(self, name)
+    }
+    fn append_diary(&self, agent_id: &str, entry: &str) -> Result<()> {
+        InMemoryBackend::append_diary(self, agent_id, entry)
+    }
+    fn agent_count(&self) -> usize {
+        InMemoryBackend::agent_count(self)
+    }
+    fn wing_count(&self) -> usize {
+        InMemoryBackend::wing_count(self)
+    }
+    fn room_count(&self) -> usize {
+        InMemoryBackend::room_count(self)
+    }
+    fn closet_count(&self) -> usize {
+        InMemoryBackend::closet_count(self)
+    }
+    fn drawer_count(&self) -> usize {
+        InMemoryBackend::drawer_count(self)
+    }
+    fn entity_count(&self) -> usize {
+        InMemoryBackend::entity_count(self)
+    }
+    fn relationship_count(&self) -> usize {
+        InMemoryBackend::relationship_count(self)
+    }
+    fn edge_count(&self) -> usize {
+        InMemoryBackend::edge_count(self)
     }
 }
 
