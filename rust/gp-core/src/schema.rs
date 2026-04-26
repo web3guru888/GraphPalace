@@ -3,6 +3,24 @@
 //! These statements initialize the GraphPalace schema in Kuzu.
 //! All definitions map to the types in [`crate::types`].
 
+/// Schema dialect for index creation syntax.
+///
+/// Different backends require different DDL syntax for index creation.
+/// The core node/rel table DDL is shared, but index creation varies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchemaDialect {
+    /// Standard Cypher DDL (used by InMemoryBackend and Kuzu).
+    Cypher,
+    /// LadybugDB stored-procedure syntax for index creation.
+    LadybugDb,
+}
+
+impl Default for SchemaDialect {
+    fn default() -> Self {
+        Self::Cypher
+    }
+}
+
 /// All Cypher DDL statements for creating the GraphPalace schema.
 ///
 /// Returns statements in the correct execution order:
@@ -207,6 +225,44 @@ pub fn property_indexes() -> Vec<&'static str> {
     ]
 }
 
+/// Schema DDL for a specific backend dialect.
+///
+/// Node/rel table DDL is shared; only index creation syntax varies.
+pub fn schema_ddl_for(dialect: SchemaDialect) -> Vec<String> {
+    let mut stmts: Vec<String> = Vec::new();
+    // Node and rel tables are dialect-independent
+    stmts.extend(node_tables().iter().map(|s| s.to_string()));
+    stmts.extend(rel_tables().iter().map(|s| s.to_string()));
+    // Index syntax is dialect-dependent
+    stmts.extend(vector_indexes_for(dialect));
+    stmts.extend(fts_indexes_for(dialect));
+    stmts.extend(property_indexes().iter().map(|s| s.to_string()));
+    stmts
+}
+
+/// Vector index creation DDL for a specific dialect.
+pub fn vector_indexes_for(dialect: SchemaDialect) -> Vec<String> {
+    match dialect {
+        SchemaDialect::Cypher => vector_indexes().iter().map(|s| s.to_string()).collect(),
+        SchemaDialect::LadybugDb => vec![
+            "CALL CREATE_VECTOR_INDEX('drawer_embedding_idx', 'Drawer', 'embedding', 'cosine', 16, 200)".to_string(),
+            "CALL CREATE_VECTOR_INDEX('entity_embedding_idx', 'Entity', 'embedding', 'cosine', 16, 200)".to_string(),
+            "CALL CREATE_VECTOR_INDEX('room_embedding_idx', 'Room', 'embedding', 'cosine', 16, 200)".to_string(),
+        ],
+    }
+}
+
+/// FTS index creation DDL for a specific dialect.
+pub fn fts_indexes_for(dialect: SchemaDialect) -> Vec<String> {
+    match dialect {
+        SchemaDialect::Cypher => fts_indexes().iter().map(|s| s.to_string()).collect(),
+        SchemaDialect::LadybugDb => vec![
+            "CALL CREATE_FTS_INDEX('drawer_content_idx', 'Drawer', ['content'])".to_string(),
+            "CALL CREATE_FTS_INDEX('entity_name_idx', 'Entity', ['name', 'description'])".to_string(),
+        ],
+    }
+}
+
 /// Cypher statements for bulk pheromone decay operations.
 pub fn decay_statements() -> Vec<&'static str> {
     vec![
@@ -285,5 +341,50 @@ mod tests {
         assert!(stmts[1].contains("success_pheromone"));
         assert!(stmts[1].contains("traversal_pheromone"));
         assert!(stmts[1].contains("recency_pheromone"));
+    }
+
+    // ─── Schema dialect ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_schema_dialect_default_is_cypher() {
+        assert_eq!(SchemaDialect::default(), SchemaDialect::Cypher);
+    }
+
+    #[test]
+    fn test_vector_indexes_cypher_matches_original() {
+        let original: Vec<String> = vector_indexes().iter().map(|s| s.to_string()).collect();
+        let dialect = vector_indexes_for(SchemaDialect::Cypher);
+        assert_eq!(original, dialect);
+    }
+
+    #[test]
+    fn test_vector_indexes_ladybugdb() {
+        let stmts = vector_indexes_for(SchemaDialect::LadybugDb);
+        assert_eq!(stmts.len(), 3);
+        assert!(stmts[0].starts_with("CALL CREATE_VECTOR_INDEX"));
+        assert!(stmts[0].contains("'Drawer'"));
+        assert!(stmts[0].contains("'cosine'"));
+    }
+
+    #[test]
+    fn test_fts_indexes_ladybugdb() {
+        let stmts = fts_indexes_for(SchemaDialect::LadybugDb);
+        assert_eq!(stmts.len(), 2);
+        assert!(stmts[0].starts_with("CALL CREATE_FTS_INDEX"));
+        assert!(stmts[1].contains("['name', 'description']"));
+    }
+
+    #[test]
+    fn test_schema_ddl_for_cypher_count() {
+        let stmts = schema_ddl_for(SchemaDialect::Cypher);
+        // Same count as original: 7 + 11 + 3 + 2 + 4 = 27
+        assert_eq!(stmts.len(), 27);
+    }
+
+    #[test]
+    fn test_schema_ddl_for_ladybugdb_count() {
+        let stmts = schema_ddl_for(SchemaDialect::LadybugDb);
+        // Same count: 7 + 11 + 3 + 2 + 4 = 27
+        assert_eq!(stmts.len(), 27);
     }
 }
