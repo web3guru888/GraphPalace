@@ -582,6 +582,32 @@ impl GraphPalace {
         Ok(())
     }
 
+    /// Deposit negative pheromones along a failed/dead-end path.
+    ///
+    /// Subtracts from success pheromone on edges and exploitation on nodes.
+    /// All values are floored at 0.0 — pheromones cannot go negative.
+    /// Traversal and recency are not modified (they record factual usage).
+    pub fn deposit_failure_pheromones(&self, path: &[String], penalty: f64) -> Result<()> {
+        if path.len() < 2 {
+            return Ok(());
+        }
+        for window in path.windows(2) {
+            self.storage.deposit_failure_edge_pheromones(
+                &window[0],
+                &window[1],
+                penalty,
+            );
+        }
+        let exploitation_penalty =
+            gp_stigmergy::rewards::EXPLOITATION_INCREMENT
+            * gp_stigmergy::rewards::FAILURE_EXPLOITATION_FACTOR;
+        for node_id in path {
+            self.storage
+                .deposit_failure_node_pheromones(node_id, exploitation_penalty);
+        }
+        Ok(())
+    }
+
     /// Apply one cycle of pheromone decay across the entire palace.
     pub fn decay_pheromones(&mut self) -> Result<()> {
         self.storage

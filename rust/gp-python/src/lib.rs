@@ -784,6 +784,23 @@ impl PyPalace {
         Ok(())
     }
 
+    /// Deposit negative pheromones along a failed path.
+    ///
+    /// Decreases success pheromone on edges and exploitation on nodes along
+    /// the path. Values are floored at zero.
+    ///
+    /// Args:
+    ///     path (list[str]): Ordered node IDs forming the failed path.
+    ///     penalty (float): Penalty magnitude. Defaults to ``1.0``.
+    #[pyo3(signature = (path, penalty=1.0))]
+    fn deposit_failure_pheromones(&self, path: Vec<String>, penalty: f64) -> PyResult<()> {
+        let guard = self.inner.lock().map_err(gp_err)?;
+        let palace = &guard.0;
+        palace.deposit_failure_pheromones(&path, penalty).map_err(gp_err)?;
+        if self.auto_save { save_palace(palace, &self.path)?; }
+        Ok(())
+    }
+
     /// Invalidate a knowledge-graph triple.
     ///
     /// Args:

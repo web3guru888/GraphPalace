@@ -106,6 +106,58 @@ pub fn deposit_path_success_clamped(
     }
 }
 
+/// Failure penalty as a fraction of the exploitation increment.
+pub const FAILURE_EXPLOITATION_FACTOR: f64 = 0.5;
+
+/// Deposit negative pheromones along a failed/dead-end path.
+///
+/// Mirror of [`deposit_path_success`] with subtraction instead of addition.
+/// - Each **edge** at position `i` gets: `success -= penalty × (1.0 - i/n)`
+/// - Each **node** gets: `exploitation -= EXPLOITATION_INCREMENT × 0.5`
+/// - All values are floored at 0.0 (pheromones cannot go negative).
+/// - Traversal and recency are NOT modified (they record factual usage).
+///
+/// # Arguments
+/// - `edges`: mutable slice of edge pheromones along the failed path
+/// - `nodes`: mutable slice of node pheromones along the failed path
+/// - `penalty`: base penalty amount (positive value; will be subtracted)
+pub fn deposit_path_failure(
+    edges: &mut [EdgePheromones],
+    nodes: &mut [NodePheromones],
+    penalty: f64,
+) {
+    let path_len = edges.len() as f64;
+
+    if path_len > 0.0 {
+        for (i, edge) in edges.iter_mut().enumerate() {
+            let position_weight = 1.0 - (i as f64 / path_len);
+            edge.success = (edge.success - penalty * position_weight).max(0.0);
+        }
+    }
+
+    for node in nodes.iter_mut() {
+        node.exploitation =
+            (node.exploitation - EXPLOITATION_INCREMENT * FAILURE_EXPLOITATION_FACTOR).max(0.0);
+    }
+}
+
+/// Deposit negative pheromones with saturation-aware clamping.
+pub fn deposit_path_failure_clamped(
+    edges: &mut [EdgePheromones],
+    nodes: &mut [NodePheromones],
+    penalty: f64,
+    config: &gp_core::config::PheromoneConfig,
+) {
+    deposit_path_failure(edges, nodes, penalty);
+    // Floor is already enforced in deposit_path_failure, but apply ceiling too
+    for edge in edges.iter_mut() {
+        apply_edge_saturation(edge, config);
+    }
+    for node in nodes.iter_mut() {
+        apply_node_saturation(node, config);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,5 +365,55 @@ mod tests {
         deposit_path_success_clamped(&mut edges, &mut nodes, 1.0, &config);
         // All below ceiling, should be same as unclamped
         assert!((edges[0].success - 1.5).abs() < 1e-12);
+    }
+
+    // ─── Failure deposit ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_deposit_path_failure_single_edge() {
+        let mut edges = vec![EdgePheromones { success: 1.0, traversal: 0.5, recency: 0.3 }];
+        let mut nodes = vec![NodePheromones { exploitation: 1.0, exploration: 0.5 }];
+        deposit_path_failure(&mut edges, &mut nodes, 0.5);
+        // success: 1.0 - 0.5 × 1.0 = 0.5
+        assert!((edges[0].success - 0.5).abs() < 1e-12);
+        // traversal unchanged
+        assert!((edges[0].traversal - 0.5).abs() < 1e-12);
+        // recency unchanged
+        assert!((edges[0].recency - 0.3).abs() < 1e-12);
+        // exploitation: 1.0 - 0.2 × 0.5 = 0.9
+        assert!((nodes[0].exploitation - 0.9).abs() < 1e-12);
+        // exploration unchanged
+        assert!((nodes[0].exploration - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_deposit_path_failure_floors_at_zero() {
+        let mut edges = vec![EdgePheromones { success: 0.1, traversal: 0.5, recency: 0.3 }];
+        let mut nodes = vec![NodePheromones { exploitation: 0.05, exploration: 0.5 }];
+        deposit_path_failure(&mut edges, &mut nodes, 5.0);
+        assert_eq!(edges[0].success, 0.0);
+        assert_eq!(nodes[0].exploitation, 0.0);
+    }
+
+    #[test]
+    fn test_deposit_path_failure_position_weighting() {
+        let mut edges = vec![
+            EdgePheromones { success: 2.0, ..EdgePheromones::default() },
+            EdgePheromones { success: 2.0, ..EdgePheromones::default() },
+        ];
+        let mut nodes = vec![NodePheromones::default(); 3];
+        deposit_path_failure(&mut edges, &mut nodes, 1.0);
+        // Edge 0: 2.0 - 1.0 × (1 - 0/2) = 2.0 - 1.0 = 1.0
+        assert!((edges[0].success - 1.0).abs() < 1e-12);
+        // Edge 1: 2.0 - 1.0 × (1 - 1/2) = 2.0 - 0.5 = 1.5
+        assert!((edges[1].success - 1.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_deposit_path_failure_empty() {
+        let mut edges: Vec<EdgePheromones> = vec![];
+        let mut nodes: Vec<NodePheromones> = vec![];
+        deposit_path_failure(&mut edges, &mut nodes, 1.0);
+        // No panic
     }
 }

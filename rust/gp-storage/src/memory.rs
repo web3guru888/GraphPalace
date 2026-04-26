@@ -948,6 +948,48 @@ impl InMemoryBackend {
         }
         total
     }
+
+    // -- Failure deposits ----------------------------------------------------
+
+    /// Deposit negative (failure) pheromones on an edge. Subtracts from success,
+    /// floors at 0.0. Does not modify traversal or recency.
+    pub fn deposit_failure_edge_pheromones(
+        &self,
+        from: &str,
+        to: &str,
+        penalty: f64,
+    ) {
+        let mut d = self.write_data();
+        let key = format!("{from}:{to}");
+        let rev_key = format!("{to}:{from}");
+        if let Some(ep) = d.edge_pheromones.get_mut(&key) {
+            ep.success = (ep.success - penalty).max(0.0);
+        } else if let Some(ep) = d.edge_pheromones.get_mut(&rev_key) {
+            ep.success = (ep.success - penalty).max(0.0);
+        }
+    }
+
+    /// Deposit negative (failure) pheromones on a node. Subtracts from exploitation,
+    /// floors at 0.0. Does not modify exploration.
+    pub fn deposit_failure_node_pheromones(
+        &self,
+        node_id: &str,
+        exploitation_penalty: f64,
+    ) {
+        let mut d = self.write_data();
+        // Check all node types
+        if let Some(w) = d.wings.get_mut(node_id) {
+            w.pheromones.exploitation = (w.pheromones.exploitation - exploitation_penalty).max(0.0);
+        } else if let Some(r) = d.rooms.get_mut(node_id) {
+            r.pheromones.exploitation = (r.pheromones.exploitation - exploitation_penalty).max(0.0);
+        } else if let Some(c) = d.closets.get_mut(node_id) {
+            c.pheromones.exploitation = (c.pheromones.exploitation - exploitation_penalty).max(0.0);
+        } else if let Some(dr) = d.drawers.get_mut(node_id) {
+            dr.pheromones.exploitation = (dr.pheromones.exploitation - exploitation_penalty).max(0.0);
+        } else if let Some(e) = d.entities.get_mut(node_id) {
+            e.pheromones.exploitation = (e.pheromones.exploitation - exploitation_penalty).max(0.0);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
