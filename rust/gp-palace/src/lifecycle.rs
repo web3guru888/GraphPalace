@@ -77,6 +77,87 @@ pub struct KgRelationship {
     pub statement_type: StatementType,
 }
 
+// ---------------------------------------------------------------------------
+// Hyperstructure lifecycle (NE/E tracking)
+// ---------------------------------------------------------------------------
+
+/// Phase classification for a hyperstructure node.
+///
+/// Based on Norris (2011): NE hyperstructures are dynamically maintained
+/// by active processes; E hyperstructures are stable self-assembled states.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HyperstructurePhase {
+    /// Actively maintained by ongoing pheromone deposits. Dissolves if activity ceases.
+    NonEquilibrium,
+    /// Stable, self-assembled. Low activity but persistent structure.
+    Equilibrium,
+    /// Between states — moderate activity, not yet classified.
+    Transitioning,
+}
+
+impl std::fmt::Display for HyperstructurePhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NonEquilibrium => write!(f, "non-equilibrium"),
+            Self::Equilibrium => write!(f, "equilibrium"),
+            Self::Transitioning => write!(f, "transitioning"),
+        }
+    }
+}
+
+/// Lifecycle metrics for a palace node (wing, room, closet, or drawer).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HyperstructureMetrics {
+    /// Node ID.
+    pub node_id: String,
+    /// Human-readable label.
+    pub label: String,
+    /// Node type: "wing", "room", "closet", "drawer", "entity".
+    pub node_type: String,
+    /// Non-equilibrium score: sum of exploitation + exploration pheromones.
+    /// High values indicate active maintenance.
+    pub ne_score: f64,
+    /// Equilibrium score: structural connectivity (child count / edge count).
+    /// High values indicate stable structure.
+    pub e_score: f64,
+    /// NE/E ratio. > 1.0 = active, < 1.0 = stable, ≈ 1.0 = transitioning.
+    pub ne_e_ratio: f64,
+    /// Classified phase based on NE/E ratio thresholds.
+    pub phase: HyperstructurePhase,
+}
+
+/// NE/E ratio threshold for NonEquilibrium classification.
+pub const NE_THRESHOLD: f64 = 1.5;
+/// NE/E ratio threshold for Equilibrium classification.
+pub const E_THRESHOLD: f64 = 0.5;
+
+/// Classify a node's hyperstructure phase from its NE/E ratio.
+pub fn classify_phase(ne_e_ratio: f64) -> HyperstructurePhase {
+    if ne_e_ratio >= NE_THRESHOLD {
+        HyperstructurePhase::NonEquilibrium
+    } else if ne_e_ratio <= E_THRESHOLD {
+        HyperstructurePhase::Equilibrium
+    } else {
+        HyperstructurePhase::Transitioning
+    }
+}
+
+/// Summary of hyperstructure phase distribution across the palace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LifecycleSummary {
+    /// Total NE nodes.
+    pub ne_count: usize,
+    /// Total E nodes.
+    pub e_count: usize,
+    /// Total transitioning nodes.
+    pub transitioning_count: usize,
+    /// Palace-wide NE/E ratio (ne_count / max(e_count, 1)).
+    pub global_ne_e_ratio: f64,
+    /// Per-node metrics (all nodes).
+    pub nodes: Vec<HyperstructureMetrics>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,5 +274,65 @@ mod tests {
         let deser: KgRelationship = serde_json::from_str(&json).unwrap();
         assert_eq!(deser.statement_type, StatementType::Hypothesis);
         assert!(deser.valid_from.is_some());
+    }
+
+    // ─── Hyperstructure lifecycle ─────────────────────────────────────────
+
+    #[test]
+    fn test_classify_phase_ne() {
+        assert_eq!(classify_phase(2.0), HyperstructurePhase::NonEquilibrium);
+        assert_eq!(classify_phase(1.5), HyperstructurePhase::NonEquilibrium);
+    }
+
+    #[test]
+    fn test_classify_phase_e() {
+        assert_eq!(classify_phase(0.3), HyperstructurePhase::Equilibrium);
+        assert_eq!(classify_phase(0.0), HyperstructurePhase::Equilibrium);
+        assert_eq!(classify_phase(0.5), HyperstructurePhase::Equilibrium);
+    }
+
+    #[test]
+    fn test_classify_phase_transitioning() {
+        assert_eq!(classify_phase(1.0), HyperstructurePhase::Transitioning);
+        assert_eq!(classify_phase(0.8), HyperstructurePhase::Transitioning);
+        assert_eq!(classify_phase(1.4), HyperstructurePhase::Transitioning);
+    }
+
+    #[test]
+    fn test_hyperstructure_metrics_serialization() {
+        let m = HyperstructureMetrics {
+            node_id: "wing_1".into(),
+            label: "Science".into(),
+            node_type: "wing".into(),
+            ne_score: 2.5,
+            e_score: 3.0,
+            ne_e_ratio: 0.833,
+            phase: HyperstructurePhase::Transitioning,
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        let deser: HyperstructureMetrics = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.node_id, "wing_1");
+        assert_eq!(deser.phase, HyperstructurePhase::Transitioning);
+    }
+
+    #[test]
+    fn test_lifecycle_summary_serialization() {
+        let s = LifecycleSummary {
+            ne_count: 5,
+            e_count: 10,
+            transitioning_count: 3,
+            global_ne_e_ratio: 0.5,
+            nodes: vec![],
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let deser: LifecycleSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.ne_count, 5);
+    }
+
+    #[test]
+    fn test_hyperstructure_phase_display() {
+        assert_eq!(HyperstructurePhase::NonEquilibrium.to_string(), "non-equilibrium");
+        assert_eq!(HyperstructurePhase::Equilibrium.to_string(), "equilibrium");
+        assert_eq!(HyperstructurePhase::Transitioning.to_string(), "transitioning");
     }
 }

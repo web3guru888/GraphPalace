@@ -1016,6 +1016,86 @@ impl GraphPalace {
         })
     }
 
+    // -- Hyperstructure lifecycle ----------------------------------------------
+
+    /// Compute hyperstructure lifecycle metrics for a single node.
+    pub fn hyperstructure_metrics(&self, node_id: &str) -> Result<crate::lifecycle::HyperstructureMetrics> {
+        use crate::lifecycle::{classify_phase, HyperstructureMetrics};
+
+        let d = self.storage.read_data();
+
+        let (label, node_type, pheromones, child_count) = if let Some(w) = d.wings.get(node_id) {
+            let children = d.parent_map.values().filter(|p| *p == node_id).count();
+            (w.name.clone(), "wing", w.pheromones.clone(), children)
+        } else if let Some(r) = d.rooms.get(node_id) {
+            let children = d.parent_map.values().filter(|p| *p == node_id).count();
+            (r.name.clone(), "room", r.pheromones.clone(), children)
+        } else if let Some(c) = d.closets.get(node_id) {
+            (c.name.clone(), "closet", c.pheromones.clone(), c.drawer_count as usize)
+        } else if let Some(dr) = d.drawers.get(node_id) {
+            let content_preview: String = dr.content.chars().take(30).collect();
+            (content_preview, "drawer", dr.pheromones.clone(), 0)
+        } else if let Some(e) = d.entities.get(node_id) {
+            let rels = d.relationships.iter()
+                .filter(|r| r.subject == node_id || r.object == node_id)
+                .count();
+            (e.name.clone(), "entity", e.pheromones.clone(), rels)
+        } else {
+            return Err(GraphPalaceError::NodeNotFound {
+                id: node_id.to_string(),
+            });
+        };
+
+        let ne_score = pheromones.exploitation + pheromones.exploration;
+        let e_score = (child_count as f64).max(1.0);
+        let ne_e_ratio = ne_score / e_score;
+        let phase = classify_phase(ne_e_ratio);
+
+        Ok(HyperstructureMetrics {
+            node_id: node_id.to_string(),
+            label,
+            node_type: node_type.to_string(),
+            ne_score,
+            e_score,
+            ne_e_ratio,
+            phase,
+        })
+    }
+
+    /// Compute lifecycle summary for the entire palace.
+    pub fn lifecycle_summary(&self) -> Result<crate::lifecycle::LifecycleSummary> {
+        use crate::lifecycle::{HyperstructurePhase, LifecycleSummary};
+
+        let d = self.storage.read_data();
+        let mut all_ids: Vec<String> = Vec::new();
+        all_ids.extend(d.wings.keys().cloned());
+        all_ids.extend(d.rooms.keys().cloned());
+        all_ids.extend(d.closets.keys().cloned());
+        all_ids.extend(d.drawers.keys().cloned());
+        all_ids.extend(d.entities.keys().cloned());
+        drop(d); // release lock before calling hyperstructure_metrics
+
+        let mut nodes = Vec::new();
+        for id in &all_ids {
+            if let Ok(m) = self.hyperstructure_metrics(id) {
+                nodes.push(m);
+            }
+        }
+
+        let ne_count = nodes.iter().filter(|n| n.phase == HyperstructurePhase::NonEquilibrium).count();
+        let e_count = nodes.iter().filter(|n| n.phase == HyperstructurePhase::Equilibrium).count();
+        let transitioning_count = nodes.iter().filter(|n| n.phase == HyperstructurePhase::Transitioning).count();
+        let global_ne_e_ratio = ne_count as f64 / (e_count.max(1) as f64);
+
+        Ok(LifecycleSummary {
+            ne_count,
+            e_count,
+            transitioning_count,
+            global_ne_e_ratio,
+            nodes,
+        })
+    }
+
     // -- Export/Import -------------------------------------------------------
 
     /// Export the entire palace to a serializable snapshot.
@@ -2159,5 +2239,58 @@ mod tests {
             .filter(|(e, _)| e.relation_type == "SIMILAR_TO")
             .collect();
         assert_eq!(sim_neighbors.len(), 1, "should have exactly one SIMILAR_TO neighbor");
+    }
+
+    // ─── Hyperstructure lifecycle ─────────────────────────────────────────
+
+    #[test]
+    fn hyperstructure_metrics_for_wing() {
+        let mut p = make_palace();
+        let wid = p.add_wing("Science", WingType::Domain, "").unwrap();
+        let m = p.hyperstructure_metrics(&wid).unwrap();
+        assert_eq!(m.node_type, "wing");
+        assert_eq!(m.phase, crate::lifecycle::HyperstructurePhase::Equilibrium);
+        assert_eq!(m.ne_score, 0.0); // no pheromones deposited
+    }
+
+    #[test]
+    fn hyperstructure_metrics_active_node() {
+        let mut p = make_palace();
+        let wid = p.add_wing("Science", WingType::Domain, "").unwrap();
+        // Deposit enough pheromones to make it NE
+        for _ in 0..20 {
+            p.storage().deposit_node_pheromones(&wid, 0.5, 0.3);
+        }
+        let m = p.hyperstructure_metrics(&wid).unwrap();
+        assert!(m.ne_score > 0.0);
+        // With no children, e_score = 1.0, ne_score = 10+6 = 16, ratio = 16.0 → NE
+        assert_eq!(m.phase, crate::lifecycle::HyperstructurePhase::NonEquilibrium);
+    }
+
+    #[test]
+    fn hyperstructure_metrics_not_found() {
+        let p = make_palace();
+        assert!(p.hyperstructure_metrics("nonexistent").is_err());
+    }
+
+    #[test]
+    fn lifecycle_summary_empty_palace() {
+        let p = make_palace();
+        let s = p.lifecycle_summary().unwrap();
+        assert_eq!(s.ne_count, 0);
+        assert_eq!(s.e_count, 0);
+        assert_eq!(s.transitioning_count, 0);
+        assert!(s.nodes.is_empty());
+    }
+
+    #[test]
+    fn lifecycle_summary_with_data() {
+        let mut p = make_palace();
+        let wid = p.add_wing("Science", WingType::Domain, "").unwrap();
+        p.add_room(&wid, "Physics", HallType::Facts).unwrap();
+        let s = p.lifecycle_summary().unwrap();
+        assert_eq!(s.nodes.len(), 2); // wing + room
+        // Both should be equilibrium (no pheromone activity)
+        assert_eq!(s.e_count, 2);
     }
 }

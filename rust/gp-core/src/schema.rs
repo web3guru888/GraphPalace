@@ -7,18 +7,13 @@
 ///
 /// Different backends require different DDL syntax for index creation.
 /// The core node/rel table DDL is shared, but index creation varies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SchemaDialect {
     /// Standard Cypher DDL (used by InMemoryBackend and Kuzu).
+    #[default]
     Cypher,
     /// LadybugDB stored-procedure syntax for index creation.
     LadybugDb,
-}
-
-impl Default for SchemaDialect {
-    fn default() -> Self {
-        Self::Cypher
-    }
 }
 
 /// All Cypher DDL statements for creating the GraphPalace schema.
