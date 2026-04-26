@@ -337,6 +337,7 @@ mod tests {
             traversal_decay: 0.04,
             recency_decay: 0.20,
             decay_interval_cycles: 5,
+            ..PheromoneConfig::default()
         };
         let q = decay_node_pheromones_cypher(&config);
         assert_eq!(q.params["exploitation_rate"], CypherValue::Float(0.05));

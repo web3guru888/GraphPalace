@@ -69,6 +69,43 @@ pub fn deposit_exploration(pheromones: &mut NodePheromones) {
     pheromones.exploration += EXPLORATION_INCREMENT;
 }
 
+/// Clamp a value to a ceiling. Returns the ceiling if value exceeds it.
+#[inline]
+pub fn clamp_to_ceiling(value: f64, ceiling: f64) -> f64 {
+    if value > ceiling { ceiling } else { value }
+}
+
+/// Clamp edge pheromones to their saturation ceilings.
+pub fn apply_edge_saturation(edge: &mut EdgePheromones, config: &gp_core::config::PheromoneConfig) {
+    edge.success = clamp_to_ceiling(edge.success, config.success_max);
+    edge.traversal = clamp_to_ceiling(edge.traversal, config.traversal_max);
+    edge.recency = clamp_to_ceiling(edge.recency, config.recency_max);
+}
+
+/// Clamp node pheromones to their saturation ceilings.
+pub fn apply_node_saturation(node: &mut NodePheromones, config: &gp_core::config::PheromoneConfig) {
+    node.exploitation = clamp_to_ceiling(node.exploitation, config.exploitation_max);
+    node.exploration = clamp_to_ceiling(node.exploration, config.exploration_max);
+}
+
+/// Deposit pheromones along a successful search path with saturation clamping.
+///
+/// Same as [`deposit_path_success`] but enforces τ_max ceilings from config.
+pub fn deposit_path_success_clamped(
+    edges: &mut [EdgePheromones],
+    nodes: &mut [NodePheromones],
+    base_reward: f64,
+    config: &gp_core::config::PheromoneConfig,
+) {
+    deposit_path_success(edges, nodes, base_reward);
+    for edge in edges.iter_mut() {
+        apply_edge_saturation(edge, config);
+    }
+    for node in nodes.iter_mut() {
+        apply_node_saturation(node, config);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,5 +261,57 @@ mod tests {
         deposit_exploration(&mut p);
         assert!((p.exploitation - 0.7).abs() < 1e-12);
         assert!((p.exploration - EXPLORATION_INCREMENT).abs() < 1e-12);
+    }
+
+    // ─── Saturation ceiling (τ_max) ──────────────────────────────────────
+
+    #[test]
+    fn test_clamp_to_ceiling() {
+        assert_eq!(clamp_to_ceiling(3.0, 5.0), 3.0);
+        assert_eq!(clamp_to_ceiling(7.0, 5.0), 5.0);
+        assert_eq!(clamp_to_ceiling(5.0, 5.0), 5.0);
+        assert_eq!(clamp_to_ceiling(0.0, 5.0), 0.0);
+    }
+
+    #[test]
+    fn test_apply_edge_saturation() {
+        let config = gp_core::config::PheromoneConfig::default();
+        let mut edge = EdgePheromones { success: 10.0, traversal: 5.0, recency: 3.0 };
+        apply_edge_saturation(&mut edge, &config);
+        assert_eq!(edge.success, 5.0);   // clamped from 10.0
+        assert_eq!(edge.traversal, 2.0); // clamped from 5.0
+        assert_eq!(edge.recency, 1.0);   // clamped from 3.0
+    }
+
+    #[test]
+    fn test_apply_node_saturation() {
+        let config = gp_core::config::PheromoneConfig::default();
+        let mut node = NodePheromones { exploitation: 8.0, exploration: 6.0 };
+        apply_node_saturation(&mut node, &config);
+        assert_eq!(node.exploitation, 5.0); // clamped from 8.0
+        assert_eq!(node.exploration, 3.0);  // clamped from 6.0
+    }
+
+    #[test]
+    fn test_deposit_path_success_clamped() {
+        let config = gp_core::config::PheromoneConfig::default();
+        // Start with values near ceiling
+        let mut edges = vec![EdgePheromones { success: 4.5, traversal: 1.9, recency: 0.5 }];
+        let mut nodes = vec![NodePheromones { exploitation: 4.9, exploration: 0.0 }];
+        deposit_path_success_clamped(&mut edges, &mut nodes, 2.0, &config);
+        // success would be 4.5 + 2.0 = 6.5, clamped to 5.0
+        assert!((edges[0].success - 5.0).abs() < 1e-12);
+        // exploitation would be 4.9 + 0.2 = 5.1, clamped to 5.0
+        assert!((nodes[0].exploitation - 5.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_saturation_below_ceiling_unchanged() {
+        let config = gp_core::config::PheromoneConfig::default();
+        let mut edges = vec![EdgePheromones { success: 0.5, traversal: 0.1, recency: 0.1 }];
+        let mut nodes = vec![NodePheromones { exploitation: 0.1, exploration: 0.0 }];
+        deposit_path_success_clamped(&mut edges, &mut nodes, 1.0, &config);
+        // All below ceiling, should be same as unclamped
+        assert!((edges[0].success - 1.5).abs() < 1e-12);
     }
 }
