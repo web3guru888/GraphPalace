@@ -105,12 +105,14 @@ impl EmbeddingEngine for MockEmbeddingEngine {
 /// ```
 pub fn auto_engine(model_dir: Option<&Path>) -> Box<dyn EmbeddingEngine> {
     #[cfg(feature = "onnx")]
-    if let Some(dir) = model_dir
-        && dir.join("model.onnx").exists()
-        && dir.join("tokenizer.json").exists()
-        && let Ok(engine) = crate::onnx::OnnxEmbeddingEngine::from_pretrained(dir)
-    {
-        return Box::new(engine);
+    if let Some(dir) = model_dir {
+        if dir.join("model.onnx").exists()
+            && dir.join("tokenizer.json").exists()
+        {
+            if let Ok(engine) = crate::onnx::OnnxEmbeddingEngine::from_pretrained(dir) {
+                return Box::new(engine);
+            }
+        }
     }
 
     // Suppress unused-variable warning when `onnx` feature is disabled.
