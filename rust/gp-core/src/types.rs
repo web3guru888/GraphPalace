@@ -367,10 +367,11 @@ impl Tunnel {
 }
 
 /// Classification of a knowledge graph statement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum StatementType {
     /// An established, verified fact.
+    #[default]
     Fact,
     /// A direct observation (may be noisy or context-dependent).
     Observation,
@@ -380,11 +381,6 @@ pub enum StatementType {
     Hypothesis,
 }
 
-impl Default for StatementType {
-    fn default() -> Self {
-        Self::Fact
-    }
-}
 
 impl std::fmt::Display for StatementType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
