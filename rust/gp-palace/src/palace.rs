@@ -436,11 +436,12 @@ impl GraphPalace {
         let d = self.storage.read_data();
         // Find existing closets in this room
         for (child_id, parent_id) in &d.parent_map {
-            if parent_id == room_id
-                && let Some(closet) = d.closets.get(child_id)
-                && closet.name == "General"
-            {
-                return Ok(closet.id.clone());
+            if parent_id == room_id {
+                if let Some(closet) = d.closets.get(child_id) {
+                    if closet.name == "General" {
+                        return Ok(closet.id.clone());
+                    }
+                }
             }
         }
         // Check if any closet exists at all
@@ -1140,16 +1141,16 @@ fn resolve_drawer_location(
     let mut wing_name = String::new();
 
     // drawer → closet → room → wing
-    if let Some(closet_id) = data.parent_map.get(drawer_id)
-        && let Some(room_id) = data.parent_map.get(closet_id.as_str())
-    {
-        if let Some(room) = data.rooms.get(room_id.as_str()) {
-            room_name = room.name.clone();
-        }
-        if let Some(wing_id) = data.parent_map.get(room_id.as_str())
-            && let Some(wing) = data.wings.get(wing_id.as_str())
-        {
-            wing_name = wing.name.clone();
+    if let Some(closet_id) = data.parent_map.get(drawer_id) {
+        if let Some(room_id) = data.parent_map.get(closet_id.as_str()) {
+            if let Some(room) = data.rooms.get(room_id.as_str()) {
+                room_name = room.name.clone();
+            }
+            if let Some(wing_id) = data.parent_map.get(room_id.as_str()) {
+                if let Some(wing) = data.wings.get(wing_id.as_str()) {
+                    wing_name = wing.name.clone();
+                }
+            }
         }
     }
 

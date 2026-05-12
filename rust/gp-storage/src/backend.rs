@@ -105,10 +105,10 @@ pub trait StorageBackend: Send + Sync {
     /// Default implementation delegates to `execute_query`.
     fn execute_returning(&self, cypher: &str) -> Result<Option<String>> {
         let rows = self.execute_query(cypher)?;
-        if let Some(row) = rows.first()
-            && let Some((_, val)) = row.iter().next()
-        {
-            return Ok(Some(val.to_string()));
+        if let Some(row) = rows.first() {
+            if let Some((_, val)) = row.iter().next() {
+                return Ok(Some(val.to_string()));
+            }
         }
         Ok(None)
     }

@@ -363,10 +363,10 @@ impl InMemoryBackend {
             });
         }
         // Decrement closet count
-        if let Some(parent_id) = d.parent_map.remove(id)
-            && let Some(closet) = d.closets.get_mut(&parent_id)
-        {
-            closet.drawer_count = closet.drawer_count.saturating_sub(1);
+        if let Some(parent_id) = d.parent_map.remove(id) {
+            if let Some(closet) = d.closets.get_mut(&parent_id) {
+                closet.drawer_count = closet.drawer_count.saturating_sub(1);
+            }
         }
         // Remove from the HNSW index.
         d.hnsw_index.remove(id);
@@ -615,10 +615,10 @@ impl InMemoryBackend {
         // Recompute edge costs — collect keys first to avoid overlapping borrows
         let keys: Vec<String> = d.edge_costs.keys().cloned().collect();
         for key in &keys {
-            if let Some(ph) = d.edge_pheromones.get(key).cloned()
-                && let Some(cost) = d.edge_costs.get_mut(key)
-            {
-                gp_stigmergy::cost::recompute_edge_cost(cost, &ph);
+            if let Some(ph) = d.edge_pheromones.get(key).cloned() {
+                if let Some(cost) = d.edge_costs.get_mut(key) {
+                    gp_stigmergy::cost::recompute_edge_cost(cost, &ph);
+                }
             }
         }
     }

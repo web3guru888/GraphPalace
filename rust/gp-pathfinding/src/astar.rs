@@ -116,10 +116,11 @@ impl SemanticAStar {
             }
 
             // Skip if we've already found a better path to this node.
-            if let Some(&best_g) = g_scores.get(&current.node_id)
-                && current.g_cost > best_g + 1e-10 {
+            if let Some(&best_g) = g_scores.get(&current.node_id) {
+                if current.g_cost > best_g + 1e-10 {
                     continue;
                 }
+            }
 
             nodes_expanded += 1;
 

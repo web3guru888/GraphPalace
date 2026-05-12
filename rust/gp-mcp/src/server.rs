@@ -398,10 +398,11 @@ impl McpServer {
         }
 
         // Try custom handler first
-        if let Some(ref mut handler) = self.handler
-            && let Some(result) = handler.handle_tool(name, arguments) {
+        if let Some(ref mut handler) = self.handler {
+            if let Some(result) = handler.handle_tool(name, arguments) {
                 return result;
             }
+        }
 
         // Fall through to default placeholder handling
         match name {
