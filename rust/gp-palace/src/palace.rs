@@ -18,7 +18,7 @@ use gp_storage::memory::InMemoryBackend;
 
 use crate::export::{ImportMode, ImportStats, PalaceExport};
 use crate::lifecycle::{ColdSpot, HotPath, KgRelationship, PalaceStatus};
-use crate::search::{PheromoneBooster, SearchResult};
+use crate::search::{DuplicateMatch, PheromoneBooster, SearchResult};
 
 // ---------------------------------------------------------------------------
 // GraphAccess adapter for InMemoryBackend
@@ -939,12 +939,12 @@ impl GraphPalace {
         &mut self,
         content: &str,
         threshold: f32,
-    ) -> Result<Option<search::DuplicateMatch>> {
+    ) -> Result<Option<DuplicateMatch>> {
         let results = self.search(content, 5)?;
         Ok(results
             .into_iter()
             .find(|r| r.score >= threshold)
-            .map(|r| search::DuplicateMatch {
+            .map(|r| DuplicateMatch {
                 drawer_id: r.drawer_id,
                 content: r.content,
                 similarity: r.score,
